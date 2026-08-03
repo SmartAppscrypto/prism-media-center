@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.3.1"`
+    `Version="0.4.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -84,7 +84,7 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
     userId: session.userId,
     Recursive: 'true',
     IncludeItemTypes: itemTypes(view?.collectionType),
-    Fields: 'Overview,PrimaryImageAspectRatio,ProductionYear,RunTimeTicks,BackdropImageTags',
+    Fields: 'Overview,PrimaryImageAspectRatio,ProductionYear,RunTimeTicks,BackdropImageTags,ProviderIds',
     ImageTypeLimit: '1',
     EnableImageTypes: 'Primary,Backdrop',
     SortBy: 'SortName',
@@ -98,11 +98,13 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
     session.accessToken
   );
 
-  return result.Items.map((item, index) => {
+  const mapped = result.Items.map((item, index) => {
     const id = String(item.Id);
     const backdropTags = item.BackdropImageTags as string[] | undefined;
+    const providerIds = item.ProviderIds as Record<string, string> | undefined;
     return {
       id,
+      seriesIds: item.Type === 'Series' ? [id] : undefined,
       title: String(item.Name ?? 'Untitled'),
       year: typeof item.ProductionYear === 'number' ? item.ProductionYear : undefined,
       runtimeMinutes: typeof item.RunTimeTicks === 'number' ? Math.round(item.RunTimeTicks / 600_000_000) : undefined,
@@ -112,9 +114,63 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
       imageUrl: `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}`,
       backdropUrl: backdropTags?.length
         ? `${session.serverUrl}/Items/${id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
+        : undefined,
+      providerKey: item.Type === 'Series'
+        ? providerIds?.Tvdb ? `tvdb:${providerIds.Tvdb}`
+          : providerIds?.Tmdb ? `tmdb:${providerIds.Tmdb}`
+            : `title:${String(item.Name ?? '').trim().toLowerCase()}:${item.ProductionYear ?? ''}`
         : undefined
     };
   });
+
+  const series = new Map<string, (typeof mapped)[number]>();
+  const consolidated: Array<(typeof mapped)[number]> = [];
+  for (const item of mapped) {
+    if (item.type !== 'Series' || !item.providerKey) {
+      consolidated.push(item);
+      continue;
+    }
+    const existing = series.get(item.providerKey);
+    if (existing) {
+      existing.seriesIds = [...(existing.seriesIds ?? [existing.id]), item.id];
+    } else {
+      series.set(item.providerKey, item);
+      consolidated.push(item);
+    }
+  }
+  return consolidated.map(({ providerKey: _providerKey, ...item }) => item);
+}
+
+export async function getSeriesEpisodes(series: MediaItem, session: PrismSession): Promise<MediaItem[]> {
+  const seriesIds = series.seriesIds?.length ? series.seriesIds : [series.id];
+  const results = await Promise.all(seriesIds.map((seriesId) => api<{ Items: Array<Record<string, unknown>> }>(
+    session.serverUrl,
+    `/Shows/${seriesId}/Episodes?UserId=${encodeURIComponent(session.userId)}&Fields=Overview,RunTimeTicks,PrimaryImageAspectRatio`,
+    {},
+    session.accessToken
+  )));
+  const episodes = results.flatMap((result) => result.Items).map((episode, index) => {
+    const id = String(episode.Id);
+    return {
+      id,
+      title: String(episode.Name ?? `Episode ${episode.IndexNumber ?? index + 1}`),
+      seasonNumber: typeof episode.ParentIndexNumber === 'number' ? episode.ParentIndexNumber : 0,
+      episodeNumber: typeof episode.IndexNumber === 'number' ? episode.IndexNumber : index + 1,
+      runtimeMinutes: typeof episode.RunTimeTicks === 'number' ? Math.round(episode.RunTimeTicks / 600_000_000) : undefined,
+      overview: typeof episode.Overview === 'string' ? episode.Overview : undefined,
+      type: 'Episode' as const,
+      hue: series.hue,
+      imageUrl: `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=720&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
+    };
+  });
+  const unique = new Map<string, MediaItem>();
+  for (const episode of episodes) {
+    const key = `${episode.seasonNumber}:${episode.episodeNumber}`;
+    if (!unique.has(key)) unique.set(key, episode);
+  }
+  return [...unique.values()].sort((a, b) =>
+    (a.seasonNumber ?? 0) - (b.seasonNumber ?? 0) || (a.episodeNumber ?? 0) - (b.episodeNumber ?? 0)
+  );
 }
 
 type JellyfinMediaStream = {

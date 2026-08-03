@@ -1,7 +1,7 @@
 import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackDetails, getPlaybackVersions, getViews, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getViews, signIn, subtitleUrl } from './jellyfin';
 import type { LibraryView, MediaItem, PlaybackDetails, PrismSession, SubtitleTrack } from './types';
 
 const sessionKey = 'prism-session';
@@ -345,7 +345,7 @@ export default function App() {
   const [demo, setDemo] = useState(false);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [selected, setSelected] = useState<MediaItem | null>(null);
-  const [playing, setPlaying] = useState(false);
+  const [playingItem, setPlayingItem] = useState<MediaItem | null>(null);
   const [libraryError, setLibraryError] = useState('');
   const [views, setViews] = useState<LibraryView[]>([]);
   const [activeView, setActiveView] = useState<LibraryView | null>(null);
@@ -353,6 +353,10 @@ export default function App() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [playbackVersions, setPlaybackVersions] = useState<PlaybackDetails[]>([]);
   const [selectedMediaSourceId, setSelectedMediaSourceId] = useState<string | undefined>();
+  const [seriesEpisodes, setSeriesEpisodes] = useState<MediaItem[]>([]);
+  const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [seriesError, setSeriesError] = useState('');
 
   useEffect(() => {
     setPlaybackVersions([]);
@@ -364,6 +368,25 @@ export default function App() {
       setPlaybackVersions(versions);
       setSelectedMediaSourceId(versions[0]?.mediaSourceId);
     }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [selected, session]);
+
+  useEffect(() => {
+    setSeriesEpisodes([]);
+    setSelectedSeason(null);
+    setSeriesError('');
+    if (!selected || selected.type !== 'Series' || !session) return;
+    let cancelled = false;
+    setSeriesLoading(true);
+    getSeriesEpisodes(selected, session).then((episodes) => {
+      if (cancelled) return;
+      setSeriesEpisodes(episodes);
+      setSelectedSeason(episodes[0]?.seasonNumber ?? 0);
+    }).catch((reason: unknown) => {
+      if (!cancelled) setSeriesError(reason instanceof Error ? reason.message : 'Episodes could not be loaded.');
+    }).finally(() => {
+      if (!cancelled) setSeriesLoading(false);
+    });
     return () => { cancelled = true; };
   }, [selected, session]);
 
@@ -382,13 +405,13 @@ export default function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        if (playing) setPlaying(false);
+        if (playingItem) setPlayingItem(null);
         else if (selected) setSelected(null);
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [playing, selected]);
+  }, [playingItem, selected]);
 
   const visibleItems = demo ? demoItems : items;
 
@@ -415,7 +438,10 @@ export default function App() {
   const dragRegion = <div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />;
 
   if (!session && !demo) return <>{dragRegion}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
-  if (playing && selected && session) return <>{dragRegion}<Player item={selected} session={session} mediaSourceId={selectedMediaSourceId} onClose={() => setPlaying(false)} /></>;
+  if (playingItem && session) return <>{dragRegion}<Player item={playingItem} session={session} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onClose={() => setPlayingItem(null)} /></>;
+
+  const seasons = [...new Set(seriesEpisodes.map((episode) => episode.seasonNumber ?? 0))];
+  const visibleEpisodes = seriesEpisodes.filter((episode) => (episode.seasonNumber ?? 0) === selectedSeason);
 
   return (
     <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library ${selected ? 'library--inspect' : ''}`}>
@@ -471,12 +497,36 @@ export default function App() {
             {demo ? (
               <button className="play play--disabled" onClick={() => alert('Connect Prism to your Jellyfin server to play your own media.')}><span>▶</span> CONNECT TO PLAY</button>
             ) : selected.type === 'Series' ? (
-              <button className="play play--disabled" disabled><span>＋</span> EPISODE BROWSING NEXT</button>
+              <div className="show-browser">
+                {seriesLoading && <p className="show-browser__status">DEVELOPING EPISODES…</p>}
+                {seriesError && <p className="show-browser__status show-browser__status--error">{seriesError}</p>}
+                {!seriesLoading && !seriesError && (
+                  <>
+                    <div className="season-tabs" aria-label="Seasons">
+                      {seasons.map((season) => (
+                        <button key={season} className={selectedSeason === season ? 'is-active' : ''} onClick={() => setSelectedSeason(season)}>
+                          {season === 0 ? 'SPECIALS' : `SEASON ${season}`}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="episode-list">
+                      {visibleEpisodes.map((episode) => (
+                        <button key={episode.id} className="episode-row" onClick={() => setPlayingItem(episode)}>
+                          <span className="episode-row__number">{String(episode.episodeNumber ?? 0).padStart(2, '0')}</span>
+                          <span className="episode-row__copy"><strong>{episode.title}</strong><small>{formatRuntime(episode.runtimeMinutes)}</small></span>
+                          <span className="episode-row__play">▶</span>
+                        </button>
+                      ))}
+                      {!visibleEpisodes.length && <p className="show-browser__status">NO EPISODES FOUND</p>}
+                    </div>
+                  </>
+                )}
+              </div>
             ) : selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
               <button className="play play--disabled" disabled><span>♫</span> MUSIC PLAYBACK NEXT</button>
             ) : (
               <div className="playback-actions">
-                <button className="play" onClick={() => setPlaying(true)}><span>▶</span> PLAY</button>
+                <button className="play" onClick={() => setPlayingItem(selected)}><span>▶</span> PLAY</button>
                 {playbackVersions.length > 1 && (
                   <label className="version-picker">
                     <span>VERSION</span>

@@ -7,8 +7,11 @@ export type PrismSession = {
 
 export type MediaItem = {
   id: string;
+  seriesIds?: string[];
   title: string;
   year?: number;
+  seasonNumber?: number;
+  episodeNumber?: number;
   runtimeMinutes?: number;
   overview?: string;
   imageUrl?: string;

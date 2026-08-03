@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getPlaybackVersions } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackVersions, getSeriesEpisodes } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -59,5 +59,33 @@ describe('playback selection', () => {
       ['4k', 'Feature - 4K'],
       ['open-matte', 'Feature - Open Matte']
     ]);
+  });
+
+  it('consolidates duplicate series that share a provider id', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ Items: [
+        { Id: 'fallout-s1', Name: 'Fallout', Type: 'Series', ProductionYear: 2024, ProviderIds: { Tvdb: '416744' } },
+        { Id: 'fallout-s2', Name: 'Fallout', Type: 'Series', ProductionYear: 2024, ProviderIds: { Tvdb: '416744' } }
+      ] })
+    }));
+
+    const shows = await getLibrary({ serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' }, { id: 'shows', name: 'Shows', collectionType: 'tvshows' });
+    expect(shows).toHaveLength(1);
+    expect(shows[0].seriesIds).toEqual(['fallout-s1', 'fallout-s2']);
+  });
+
+  it('combines seasons and removes duplicate episode numbers', async () => {
+    const response = (items: unknown[]) => ({ ok: true, json: async () => ({ Items: items }) });
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response([{ Id: 's1e1', Name: 'The End', Type: 'Episode', ParentIndexNumber: 1, IndexNumber: 1 }]))
+      .mockResolvedValueOnce(response([
+        { Id: 's2e1', Name: 'The Innovator', Type: 'Episode', ParentIndexNumber: 2, IndexNumber: 1 },
+        { Id: 's2e2-a', Name: 'The Golden Rule', Type: 'Episode', ParentIndexNumber: 2, IndexNumber: 2 },
+        { Id: 's2e2-b', Name: 'The Golden Rule', Type: 'Episode', ParentIndexNumber: 2, IndexNumber: 2 }
+      ])));
+
+    const episodes = await getSeriesEpisodes({ id: 'fallout-s1', seriesIds: ['fallout-s1', 'fallout-s2'], title: 'Fallout', type: 'Series', hue: 195 }, { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' });
+    expect(episodes.map((episode) => [episode.seasonNumber, episode.episodeNumber])).toEqual([[1, 1], [2, 1], [2, 2]]);
   });
 });
