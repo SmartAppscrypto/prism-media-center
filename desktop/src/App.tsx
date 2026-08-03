@@ -1,8 +1,8 @@
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getViews, signIn, subtitleUrl } from './jellyfin';
-import type { LibraryView, MediaItem, PlaybackDetails, PrismSession, SubtitleTrack } from './types';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, signIn, subtitleUrl } from './jellyfin';
+import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, SubtitleTrack } from './types';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -100,6 +100,17 @@ function formatClock(seconds: number) {
     : `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
 
+function formatMoney(value?: number) {
+  if (value === undefined) return 'NOT SUPPLIED BY SERVER';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+}
+
+function formatCodec(value?: string) {
+  if (!value) return '—';
+  const names: Record<string, string> = { h264: 'H.264', hevc: 'HEVC', h265: 'HEVC', eac3: 'E-AC-3', ac3: 'AC-3', aac: 'AAC', av1: 'AV1', vp9: 'VP9' };
+  return names[value.toLowerCase()] ?? value.toUpperCase();
+}
+
 function titleInitial(title: string) {
   const initial = title.trim().charAt(0).toUpperCase();
   return /^[A-Z]$/.test(initial) ? initial : '#';
@@ -120,6 +131,112 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
     <button className="poster" data-letter={titleInitial(item.title)} style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}`}>{artwork}</button>
   ) : (
     <div className="poster" style={style} aria-label={`${item.title} poster`}>{artwork}</div>
+  );
+}
+
+function MoreDetails({
+  item,
+  details,
+  versions,
+  similar,
+  loading,
+  error,
+  onBack,
+  onSelect
+}: {
+  item: MediaItem;
+  details: MediaDetails | null;
+  versions: PlaybackDetails[];
+  similar: MediaItem[];
+  loading: boolean;
+  error: string;
+  onBack: () => void;
+  onSelect: (item: MediaItem) => void;
+}) {
+  const cast = details?.people.filter((person) => person.type === 'Actor') ?? [];
+  const crew = details?.people.filter((person) => person.type !== 'Actor') ?? [];
+  return (
+    <section className="more-page" aria-label={`More about ${item.title}`}>
+      <div className="more-page__hero">
+        <button className="reshelve" onClick={onBack}>← BACK TO FILM</button>
+        <p className="eyebrow">THE FULL PICTURE</p>
+        <h2>{item.title}</h2>
+        {details?.tagline && <p className="more-page__tagline">“{details.tagline}”</p>}
+        <div className="more-page__facts">
+          <span>{item.year || '—'}<small>RELEASE</small></span>
+          <span>{formatRuntime(item.runtimeMinutes) || '—'}<small>RUNTIME</small></span>
+          <span>{details?.officialRating || 'NR'}<small>RATING</small></span>
+          <span>{details?.communityRating?.toFixed(1) || '—'}<small>AUDIENCE</small></span>
+          <span>{details?.criticRating ? `${Math.round(details.criticRating)}%` : '—'}<small>CRITICS</small></span>
+        </div>
+      </div>
+
+      {loading && <p className="more-page__status">DEVELOPING THE DETAILS…</p>}
+      {error && <p className="more-page__status more-page__status--error">{error}</p>}
+      {!loading && (
+        <div className="more-page__body">
+          <section className="more-section">
+            <p className="eyebrow">CAST</p>
+            {cast.length ? <div className="people-grid">{cast.map((person, index) => (
+              <article className="person-card" key={`${person.id || person.name}-${index}`}>
+                <div style={person.imageUrl ? { backgroundImage: `url("${person.imageUrl}")` } : undefined}><span>{person.name.charAt(0)}</span></div>
+                <strong>{person.name}</strong><small>{person.role || 'Cast'}</small>
+              </article>
+            ))}</div> : <p className="more-page__empty">Cast information has not been added to this title.</p>}
+          </section>
+
+          <section className="more-section more-section--crew">
+            <p className="eyebrow">CREW</p>
+            {crew.length ? <div className="crew-list">{crew.map((person, index) => (
+              <div key={`${person.id || person.name}-${index}`}><span>{person.name}</span><small>{person.role || person.type || 'Crew'}</small></div>
+            ))}</div> : <p className="more-page__empty">Crew information has not been added to this title.</p>}
+          </section>
+
+          <section className="more-section more-section--numbers">
+            <p className="eyebrow">THE NUMBERS</p>
+            <div className="financial-grid">
+              <div><small>BUDGET</small><strong>{formatMoney(details?.budget)}</strong></div>
+              <div><small>BOX OFFICE</small><strong>{formatMoney(details?.revenue)}</strong></div>
+            </div>
+          </section>
+
+          <section className="more-section more-section--specs">
+            <p className="eyebrow">TECHNICAL SPECIFICATIONS</p>
+            <div className="spec-grid">
+              {versions.map((version) => (
+                <article key={version.mediaSourceId}>
+                  <h3>{version.label}</h3>
+                  <dl>
+                    <div><dt>PICTURE</dt><dd>{version.width && version.height ? `${version.width} × ${version.height}` : '—'}</dd></div>
+                    <div><dt>VIDEO</dt><dd>{formatCodec(version.videoCodec)}</dd></div>
+                    <div><dt>AUDIO</dt><dd>{formatCodec(version.audioCodec)}</dd></div>
+                    <div><dt>CONTAINER</dt><dd>{version.container?.toUpperCase() || '—'}</dd></div>
+                    <div><dt>SUBTITLES</dt><dd>{version.subtitles.length || 'NONE'}</dd></div>
+                  </dl>
+                </article>
+              ))}
+              {!versions.length && <p className="more-page__empty">Technical information is not available.</p>}
+            </div>
+          </section>
+
+          <section className="more-section more-section--metadata">
+            <p className="eyebrow">PRODUCTION</p>
+            <dl className="metadata-list">
+              <div><dt>STUDIOS</dt><dd>{details?.studios.join(' · ') || '—'}</dd></div>
+              <div><dt>GENRES</dt><dd>{details?.genres.join(' · ') || '—'}</dd></div>
+              <div><dt>LOCATIONS</dt><dd>{details?.productionLocations.join(' · ') || '—'}</dd></div>
+            </dl>
+          </section>
+
+          <section className="more-section more-section--similar">
+            <p className="eyebrow">SIMILAR FILMS IN YOUR LIBRARY</p>
+            {similar.length ? <div className="similar-row">{similar.map((similarItem) => (
+              <Poster key={similarItem.id} item={similarItem} onSelect={onSelect} />
+            ))}</div> : <p className="more-page__empty">No related films were found in this library.</p>}
+          </section>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -424,6 +541,11 @@ export default function App() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [playbackVersions, setPlaybackVersions] = useState<PlaybackDetails[]>([]);
   const [selectedMediaSourceId, setSelectedMediaSourceId] = useState<string | undefined>();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(null);
+  const [similarItems, setSimilarItems] = useState<MediaItem[]>([]);
+  const [moreLoading, setMoreLoading] = useState(false);
+  const [moreError, setMoreError] = useState('');
   const [seriesEpisodes, setSeriesEpisodes] = useState<MediaItem[]>([]);
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
@@ -439,6 +561,10 @@ export default function App() {
   useEffect(() => {
     setPlaybackVersions([]);
     setSelectedMediaSourceId(undefined);
+    setMoreOpen(false);
+    setMediaDetails(null);
+    setSimilarItems([]);
+    setMoreError('');
     if (!selected || !session || selected.type === 'Series' || selected.type === 'MusicAlbum' || selected.type === 'Audio') return;
     let cancelled = false;
     getPlaybackVersions(selected, session).then((versions) => {
@@ -448,6 +574,28 @@ export default function App() {
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [selected, session]);
+
+  useEffect(() => {
+    if (!moreOpen || !selected) return;
+    if (demo || !session) {
+      setMediaDetails({ people: [], studios: [], genres: [], productionLocations: [] });
+      setSimilarItems(demoItems.filter((item) => item.id !== selected.id && item.type === 'Movie'));
+      return;
+    }
+    let cancelled = false;
+    setMoreLoading(true);
+    setMoreError('');
+    Promise.all([getItemDetails(selected, session), getSimilarItems(selected, session)]).then(([details, similar]) => {
+      if (cancelled) return;
+      setMediaDetails(details);
+      setSimilarItems(similar);
+    }).catch((reason: unknown) => {
+      if (!cancelled) setMoreError(reason instanceof Error ? reason.message : 'The extended details could not be loaded.');
+    }).finally(() => {
+      if (!cancelled) setMoreLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [demo, moreOpen, selected, session]);
 
   useEffect(() => {
     setSeriesEpisodes([]);
@@ -702,19 +850,34 @@ export default function App() {
       </section>
 
       {selected && (
-        <section className="inspect" style={{
+        <section className={`inspect ${moreOpen ? 'inspect--more' : ''}`} style={{
           '--selected-hue': selected.hue,
           ...(selected.backdropUrl ? { '--backdrop': `url("${selected.backdropUrl}")` } : {})
         } as React.CSSProperties}>
           <button className="inspect__scrim" onClick={() => setSelected(null)} aria-label="Reshelve title" />
-          <div className="inspect__poster"><Poster item={selected} /></div>
-          <article className="inspect__copy">
+          {moreOpen ? (
+            <MoreDetails
+              item={selected}
+              details={mediaDetails}
+              versions={playbackVersions}
+              similar={similarItems}
+              loading={moreLoading}
+              error={moreError}
+              onBack={() => setMoreOpen(false)}
+              onSelect={(item) => { setMoreOpen(false); setSelected(item); }}
+            />
+          ) : <>
+            <div className="inspect__poster"><Poster item={selected} /></div>
+            <article className="inspect__copy">
             <button className="reshelve" onClick={() => setSelected(null)}>← RESHELVE</button>
             <p className="eyebrow">{[selected.year, formatRuntime(selected.runtimeMinutes), selected.type.toUpperCase()].filter(Boolean).join(' · ')}</p>
             <h2>{selected.title}</h2>
             <p className="overview">{selected.overview || 'No synopsis is available for this title yet.'}</p>
             {demo ? (
-              <button className="play play--disabled" onClick={() => alert('Connect Prism to your Jellyfin server to play your own media.')}><span>▶</span> CONNECT TO PLAY</button>
+              <div className="inspect__actions">
+                <button className="play play--disabled" onClick={() => alert('Connect Prism to your Jellyfin server to play your own media.')}><span>▶</span> CONNECT TO PLAY</button>
+                <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span>•••</span> MORE</button>
+              </div>
             ) : selected.type === 'Series' ? (
               <div className="show-browser">
                 {seriesLoading && <p className="show-browser__status">DEVELOPING EPISODES…</p>}
@@ -744,21 +907,25 @@ export default function App() {
             ) : selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
               <button className="play play--disabled" disabled><span>♫</span> MUSIC PLAYBACK NEXT</button>
             ) : (
-              <div className="playback-actions">
-                <button className="play" onClick={() => setPlayingItem(selected)}><span>▶</span> PLAY</button>
-                {playbackVersions.length > 1 && (
-                  <label className="version-picker">
-                    <span>VERSION</span>
-                    <select value={selectedMediaSourceId} onChange={(event) => setSelectedMediaSourceId(event.target.value)} aria-label="Playback version">
-                      {playbackVersions.map((version) => (
-                        <option key={version.mediaSourceId} value={version.mediaSourceId}>{version.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+              <div className="inspect__actions">
+                <div className="playback-actions">
+                  <button className="play" onClick={() => setPlayingItem(selected)}><span>▶</span> PLAY</button>
+                  {playbackVersions.length > 1 && (
+                    <label className="version-picker">
+                      <span>VERSION</span>
+                      <select value={selectedMediaSourceId} onChange={(event) => setSelectedMediaSourceId(event.target.value)} aria-label="Playback version">
+                        {playbackVersions.map((version) => (
+                          <option key={version.mediaSourceId} value={version.mediaSourceId}>{version.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span>•••</span> MORE</button>
               </div>
             )}
-          </article>
+            </article>
+          </>}
         </section>
       )}
     </main></>

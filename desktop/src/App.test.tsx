@@ -14,6 +14,20 @@ describe('Prism shell', () => {
     expect(screen.getByRole('button', { name: '▶ CONNECT TO PLAY' })).toBeInTheDocument();
   });
 
+  it('opens the full film page and links similar library titles', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'EXPLORE THE DEMO' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open The Long Meridian' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More about The Long Meridian' }));
+
+    const morePage = screen.getByRole('region', { name: 'More about The Long Meridian' });
+    expect(morePage).toBeInTheDocument();
+    expect(screen.getByText('TECHNICAL SPECIFICATIONS')).toBeInTheDocument();
+    expect(within(morePage).getByRole('button', { name: 'Open Vermilion Coast' })).toBeInTheDocument();
+    fireEvent.click(within(morePage).getByRole('button', { name: 'Open Vermilion Coast' }));
+    expect(screen.getByRole('heading', { name: 'Vermilion Coast' })).toBeInTheDocument();
+  });
+
   it('keeps header tools minimal while supporting sorting and alphabet jumps', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'EXPLORE THE DEMO' }));

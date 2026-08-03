@@ -1,4 +1,4 @@
-import type { LibraryView, MediaItem, PlaybackDetails, PrismSession } from './types';
+import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const deviceIdKey = 'prism-device-id';
 
@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.6.0"`
+    `Version="0.7.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -140,6 +140,73 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
     }
   }
   return consolidated.map(({ providerKey: _providerKey, ...item }) => item);
+}
+
+function mapMediaItem(item: Record<string, unknown>, session: PrismSession, index = 0): MediaItem {
+  const id = String(item.Id);
+  const backdropTags = item.BackdropImageTags as string[] | undefined;
+  return {
+    id,
+    title: String(item.Name ?? 'Untitled'),
+    year: typeof item.ProductionYear === 'number' ? item.ProductionYear : undefined,
+    releaseDate: typeof item.PremiereDate === 'string' ? item.PremiereDate : undefined,
+    runtimeMinutes: typeof item.RunTimeTicks === 'number' ? Math.round(item.RunTimeTicks / 600_000_000) : undefined,
+    overview: typeof item.Overview === 'string' ? item.Overview : undefined,
+    type: (item.Type as MediaItem['type']) ?? 'Movie',
+    hue: (index * 47 + 195) % 360,
+    imageUrl: `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}`,
+    backdropUrl: backdropTags?.length
+      ? `${session.serverUrl}/Items/${id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
+      : undefined
+  };
+}
+
+export async function getItemDetails(item: MediaItem, session: PrismSession): Promise<MediaDetails> {
+  const result = await api<Record<string, unknown>>(
+    session.serverUrl,
+    `/Users/${session.userId}/Items/${item.id}?Fields=People,Studios,Genres,ProductionLocations,ProviderIds,Taglines`,
+    {},
+    session.accessToken
+  );
+  const people = (result.People as Array<Record<string, unknown>> | undefined) ?? [];
+  const studios = (result.Studios as Array<Record<string, unknown>> | undefined) ?? [];
+  const numeric = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return {
+    people: people.map((person) => {
+      const id = typeof person.Id === 'string' ? person.Id : undefined;
+      return {
+        id,
+        name: String(person.Name ?? 'Unknown'),
+        role: typeof person.Role === 'string' ? person.Role : undefined,
+        type: typeof person.Type === 'string' ? person.Type : undefined,
+        imageUrl: id ? `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=320&quality=86&api_key=${encodeURIComponent(session.accessToken)}` : undefined
+      };
+    }),
+    studios: studios.map((studio) => String(studio.Name ?? '')).filter(Boolean),
+    genres: ((result.Genres as string[] | undefined) ?? []).filter(Boolean),
+    productionLocations: ((result.ProductionLocations as string[] | undefined) ?? []).filter(Boolean),
+    officialRating: typeof result.OfficialRating === 'string' ? result.OfficialRating : undefined,
+    communityRating: numeric(result.CommunityRating),
+    criticRating: numeric(result.CriticRating),
+    tagline: ((result.Taglines as string[] | undefined) ?? [])[0],
+    budget: numeric(result.Budget),
+    revenue: numeric(result.Revenue) ?? numeric(result.BoxOffice)
+  };
+}
+
+export async function getSimilarItems(item: MediaItem, session: PrismSession): Promise<MediaItem[]> {
+  const params = new URLSearchParams({
+    userId: session.userId,
+    limit: '18',
+    Fields: 'Overview,ProductionYear,PremiereDate,RunTimeTicks,BackdropImageTags'
+  });
+  const result = await api<{ Items?: Array<Record<string, unknown>> }>(
+    session.serverUrl,
+    `/Items/${item.id}/Similar?${params}`,
+    {},
+    session.accessToken
+  );
+  return (result.Items ?? []).filter((similar) => similar.Type === 'Movie').map((similar, index) => mapMediaItem(similar, session, index));
 }
 
 export async function getSeriesEpisodes(series: MediaItem, session: PrismSession): Promise<MediaItem[]> {

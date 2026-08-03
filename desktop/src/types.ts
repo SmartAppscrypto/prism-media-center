@@ -47,3 +47,24 @@ export type PlaybackDetails = {
   audioLanguage?: string;
   subtitles: SubtitleTrack[];
 };
+
+export type MediaPerson = {
+  id?: string;
+  name: string;
+  role?: string;
+  type?: string;
+  imageUrl?: string;
+};
+
+export type MediaDetails = {
+  people: MediaPerson[];
+  studios: string[];
+  genres: string[];
+  productionLocations: string[];
+  officialRating?: string;
+  communityRating?: number;
+  criticRating?: number;
+  tagline?: string;
+  budget?: number;
+  revenue?: number;
+};
