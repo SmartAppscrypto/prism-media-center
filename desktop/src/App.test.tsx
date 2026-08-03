@@ -1,10 +1,10 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
 describe('Prism shell', () => {
   beforeEach(() => localStorage.clear());
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
   it('opens the demo library and inspects a title', () => {
     render(<App />);
@@ -25,5 +25,27 @@ describe('Prism shell', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Sort library' }), { target: { value: 'released' } });
     const posterButtons = within(screen.getByRole('region', { name: 'Media library' })).getAllByRole('button');
     expect(posterButtons[0]).toHaveAccessibleName('Open Orbital Decay');
+  });
+
+  it('opens persistent settings with All Media hidden and reorderable libraries', async () => {
+    localStorage.setItem('prism-session', JSON.stringify({ serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'steven' }));
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => url.includes('/Views') ? { Items: [
+        { Id: 'home', Name: 'Home Videos and Photos', CollectionType: 'homevideos' },
+        { Id: 'shows', Name: 'Shows', CollectionType: 'tvshows' },
+        { Id: 'movies', Name: 'Movies', CollectionType: 'movies' }
+      ] } : { Items: [] }
+    })));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open library menu' }));
+    expect(screen.queryByRole('button', { name: 'All Media' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+
+    expect(await screen.findByText('Movies')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Show All Media' })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Move Shows up' }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('prism-preferences') ?? '{}').libraryOrder.slice(0, 2)).toEqual(['shows', 'movies']));
   });
 });

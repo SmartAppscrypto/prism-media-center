@@ -5,6 +5,63 @@ import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary,
 import type { LibraryView, MediaItem, PlaybackDetails, PrismSession, SubtitleTrack } from './types';
 
 const sessionKey = 'prism-session';
+const preferencesKey = 'prism-preferences';
+
+type SortMode = 'alphabetical' | 'random' | 'released';
+type PrismPreferences = {
+  showAllMedia: boolean;
+  libraryOrder: string[];
+  hiddenLibraryIds: string[];
+  subtitleColor: 'white' | 'warm' | 'yellow' | 'cyan';
+  subtitleSize: 'small' | 'medium' | 'large';
+  subtitleBackground: 'none' | 'soft' | 'strong';
+  skipSeconds: 10 | 15 | 30;
+  gridDensity: 'cinematic' | 'comfortable' | 'compact';
+  defaultSort: SortMode;
+  reducedMotion: boolean;
+  autoEnglishSubtitles: boolean;
+};
+
+const defaultPreferences: PrismPreferences = {
+  showAllMedia: false,
+  libraryOrder: [],
+  hiddenLibraryIds: [],
+  subtitleColor: 'white',
+  subtitleSize: 'medium',
+  subtitleBackground: 'soft',
+  skipSeconds: 10,
+  gridDensity: 'comfortable',
+  defaultSort: 'alphabetical',
+  reducedMotion: false,
+  autoEnglishSubtitles: true
+};
+
+function loadPreferences(): PrismPreferences {
+  try {
+    return { ...defaultPreferences, ...JSON.parse(localStorage.getItem(preferencesKey) ?? '{}') } as PrismPreferences;
+  } catch {
+    return defaultPreferences;
+  }
+}
+
+function defaultLibraryRank(view: LibraryView) {
+  if (view.collectionType === 'movies' || view.name.toLowerCase() === 'movies') return 0;
+  if (view.collectionType === 'tvshows' || view.name.toLowerCase() === 'shows') return 1;
+  if (view.collectionType === 'homevideos') return 2;
+  if (view.collectionType === 'music') return 3;
+  if (view.name.toLowerCase().includes('playlist')) return 4;
+  return 5;
+}
+
+function orderLibraryViews(views: LibraryView[], savedOrder: string[]) {
+  const savedPositions = new Map(savedOrder.map((id, index) => [id, index]));
+  return [...views].sort((a, b) => {
+    const aSaved = savedPositions.get(a.id);
+    const bSaved = savedPositions.get(b.id);
+    if (aSaved !== undefined || bSaved !== undefined) return (aSaved ?? Number.MAX_SAFE_INTEGER) - (bSaved ?? Number.MAX_SAFE_INTEGER);
+    return defaultLibraryRank(a) - defaultLibraryRank(b) || a.name.localeCompare(b.name);
+  });
+}
 
 function windowDragProps() {
   return {
@@ -105,7 +162,7 @@ function Connect({ onConnected, onDemo }: { onConnected: (session: PrismSession)
   );
 }
 
-function Player({ item, session, mediaSourceId: preferredMediaSourceId, onClose }: { item: MediaItem; session: PrismSession; mediaSourceId?: string; onClose: () => void }) {
+function Player({ item, session, preferences, mediaSourceId: preferredMediaSourceId, onClose }: { item: MediaItem; session: PrismSession; preferences: PrismPreferences; mediaSourceId?: string; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const idleTimerRef = useRef<number | undefined>(undefined);
   const [paused, setPaused] = useState(false);
@@ -181,7 +238,9 @@ function Player({ item, session, mediaSourceId: preferredMediaSourceId, onClose 
       setSubtitleTracks(details.subtitles);
       const english = details.subtitles.find((track) => ['eng', 'en'].includes(track.language?.toLowerCase() ?? ''));
       const audioIsEnglish = ['eng', 'en'].includes(details.audioLanguage?.toLowerCase() ?? '');
-      const automaticTrack = !audioIsEnglish ? english : details.subtitles.find((track) => track.isForced && ['eng', 'en'].includes(track.language?.toLowerCase() ?? ''));
+      const automaticTrack = preferences.autoEnglishSubtitles
+        ? (!audioIsEnglish ? english : details.subtitles.find((track) => track.isForced && ['eng', 'en'].includes(track.language?.toLowerCase() ?? '')))
+        : undefined;
       setSelectedSubtitle(automaticTrack?.index ?? null);
 
       const mimeType = directPlayMimeType(details);
@@ -199,7 +258,7 @@ function Player({ item, session, mediaSourceId: preferredMediaSourceId, onClose 
       video.removeEventListener('error', onVideoError);
       hls?.destroy();
     };
-  }, [item, preferredMediaSourceId, session]);
+  }, [item, preferences.autoEnglishSubtitles, preferredMediaSourceId, session]);
 
   useEffect(() => {
     Array.from(videoRef.current?.textTracks ?? []).forEach((track, index) => {
@@ -217,7 +276,7 @@ function Player({ item, session, mediaSourceId: preferredMediaSourceId, onClose 
       revealChrome();
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault();
-        seekBy(event.key === 'ArrowRight' ? 10 : -10);
+        seekBy(event.key === 'ArrowRight' ? preferences.skipSeconds : -preferences.skipSeconds);
       } else if (event.key === ' ' || event.key.toLowerCase() === 'k') {
         event.preventDefault();
         togglePlayback();
@@ -225,7 +284,7 @@ function Player({ item, session, mediaSourceId: preferredMediaSourceId, onClose 
     }
     window.addEventListener('keydown', onPlayerKeyDown);
     return () => window.removeEventListener('keydown', onPlayerKeyDown);
-  }, [revealChrome, seekBy, togglePlayback]);
+  }, [preferences.skipSeconds, revealChrome, seekBy, togglePlayback]);
 
   function updateVolume(nextVolume: number) {
     const video = videoRef.current;
@@ -239,6 +298,11 @@ function Player({ item, session, mediaSourceId: preferredMediaSourceId, onClose 
   return (
     <div
       className={`player ${chromeVisible ? '' : 'player--idle'}`}
+      style={{
+        '--subtitle-color': { white: '#ffffff', warm: '#fff2d2', yellow: '#ffe45c', cyan: '#a9f5ff' }[preferences.subtitleColor],
+        '--subtitle-size': { small: '82%', medium: '100%', large: '126%' }[preferences.subtitleSize],
+        '--subtitle-background': { none: 'transparent', soft: 'rgb(0 0 0 / .48)', strong: 'rgb(0 0 0 / .82)' }[preferences.subtitleBackground]
+      } as React.CSSProperties}
       onMouseMove={revealChrome}
       onMouseDown={revealChrome}
       onTouchStart={revealChrome}
@@ -348,6 +412,7 @@ export default function App() {
     catch { localStorage.removeItem(sessionKey); return null; }
   });
   const [demo, setDemo] = useState(false);
+  const [preferences, setPreferences] = useState<PrismPreferences>(loadPreferences);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [playingItem, setPlayingItem] = useState<MediaItem | null>(null);
@@ -355,6 +420,7 @@ export default function App() {
   const [views, setViews] = useState<LibraryView[]>([]);
   const [activeView, setActiveView] = useState<LibraryView | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [drawerPage, setDrawerPage] = useState<'libraries' | 'settings'>('libraries');
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [playbackVersions, setPlaybackVersions] = useState<PlaybackDetails[]>([]);
   const [selectedMediaSourceId, setSelectedMediaSourceId] = useState<string | undefined>();
@@ -362,9 +428,13 @@ export default function App() {
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [seriesError, setSeriesError] = useState('');
-  const [sortMode, setSortMode] = useState<'alphabetical' | 'random' | 'released'>('alphabetical');
+  const [sortMode, setSortMode] = useState<SortMode>(preferences.defaultSort);
   const [randomNonce, setRandomNonce] = useState(0);
   const wallRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem(preferencesKey, JSON.stringify(preferences));
+  }, [preferences]);
 
   useEffect(() => {
     setPlaybackVersions([]);
@@ -402,8 +472,16 @@ export default function App() {
     if (!session) return;
     let cancelled = false;
     localStorage.setItem(sessionKey, JSON.stringify(session));
-    Promise.all([getViews(session), getLibrary(session)]).then(([serverViews, library]) => {
-      if (!cancelled) { setViews(serverViews); setItems(library); }
+    getViews(session).then(async (serverViews) => {
+      const ordered = orderLibraryViews(serverViews, preferences.libraryOrder);
+      const firstVisible = ordered.find((view) => !preferences.hiddenLibraryIds.includes(view.id));
+      const initialView = preferences.showAllMedia ? null : firstVisible ?? null;
+      const library = await getLibrary(session, initialView ?? undefined);
+      if (!cancelled) {
+        setViews(serverViews);
+        setActiveView(initialView);
+        setItems(library);
+      }
     }).catch((reason: unknown) => {
       if (!cancelled) setLibraryError(reason instanceof Error ? reason.message : 'The library could not be loaded.');
     });
@@ -422,6 +500,8 @@ export default function App() {
   }, [playingItem, selected]);
 
   const visibleItems = demo ? demoItems : items;
+  const orderedViews = useMemo(() => orderLibraryViews(views, preferences.libraryOrder), [preferences.libraryOrder, views]);
+  const visibleDrawerViews = orderedViews.filter((view) => !preferences.hiddenLibraryIds.includes(view.id));
   const sortedItems = useMemo(() => {
     const result = [...visibleItems];
     if (sortMode === 'released') {
@@ -438,6 +518,26 @@ export default function App() {
     return result.sort((a, b) => a.title.localeCompare(b.title));
   }, [randomNonce, sortMode, visibleItems]);
   const availableLetters = useMemo(() => new Set(visibleItems.map((item) => titleInitial(item.title))), [visibleItems]);
+
+  function updatePreferences(patch: Partial<PrismPreferences>) {
+    setPreferences((current) => ({ ...current, ...patch }));
+  }
+
+  function moveLibrary(viewId: string, direction: -1 | 1) {
+    const ids = orderedViews.map((view) => view.id);
+    const index = ids.indexOf(viewId);
+    const destination = index + direction;
+    if (index < 0 || destination < 0 || destination >= ids.length) return;
+    [ids[index], ids[destination]] = [ids[destination], ids[index]];
+    updatePreferences({ libraryOrder: ids });
+  }
+
+  function toggleLibrary(viewId: string) {
+    const hidden = preferences.hiddenLibraryIds.includes(viewId)
+      ? preferences.hiddenLibraryIds.filter((id) => id !== viewId)
+      : [...preferences.hiddenLibraryIds, viewId];
+    updatePreferences({ hiddenLibraryIds: hidden });
+  }
 
   function focusFirstPosterForLetter(letter: string) {
     setSortMode('alphabetical');
@@ -485,16 +585,16 @@ export default function App() {
   const dragRegion = <div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />;
 
   if (!session && !demo) return <>{dragRegion}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
-  if (playingItem && session) return <>{dragRegion}<Player item={playingItem} session={session} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onClose={() => setPlayingItem(null)} /></>;
+  if (playingItem && session) return <>{dragRegion}<Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onClose={() => setPlayingItem(null)} /></>;
 
   const seasons = [...new Set(seriesEpisodes.map((episode) => episode.seasonNumber ?? 0))];
   const visibleEpisodes = seriesEpisodes.filter((episode) => (episode.seasonNumber ?? 0) === selectedSeason);
 
   return (
-    <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library ${selected ? 'library--inspect' : ''}`}>
+    <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library library--grid-${preferences.gridDensity} ${preferences.reducedMotion ? 'library--reduced-motion' : ''} ${selected ? 'library--inspect' : ''}`}>
       <header {...windowDragProps()}>
         <div className="header__brand">
-          {!demo && <button className="menu-trigger" onClick={() => setMenuOpen(true)} aria-label="Open library menu"><span /><span /><span /></button>}
+          {!demo && <button className="menu-trigger" onClick={() => { setDrawerPage('libraries'); setMenuOpen(true); }} aria-label="Open library menu"><span /><span /><span /></button>}
           <button className="wordmark" onClick={() => setSelected(null)}>PRISM</button>
         </div>
         <div className="header__tools" aria-label="Library navigation">
@@ -527,17 +627,69 @@ export default function App() {
         <>
           <button className={`drawer-scrim ${menuOpen ? 'is-open' : ''}`} onClick={() => setMenuOpen(false)} aria-label="Close library menu" />
           <aside className={`library-drawer ${menuOpen ? 'is-open' : ''}`} aria-hidden={!menuOpen}>
-            <div className="library-drawer__top"><span>PRISM</span><button onClick={() => setMenuOpen(false)} aria-label="Close menu">×</button></div>
-            <p className="eyebrow">YOUR LIBRARIES</p>
-            <nav>
-              <button className={!activeView ? 'is-active' : ''} onClick={() => selectView(null)}><span>All Media</span><small>{!activeView ? visibleItems.length : ''}</small></button>
-              {views.map((view, index) => (
-                <button key={view.id} className={activeView?.id === view.id ? 'is-active' : ''} onClick={() => selectView(view)}>
-                  <span>{view.name}</span><small>{String(index + 1).padStart(2, '0')}</small>
-                </button>
-              ))}
-            </nav>
-            <div className="library-drawer__footer"><span>{session?.username}</span><button onClick={disconnect}>SIGN OUT</button></div>
+            <div className="library-drawer__top">
+              <span>PRISM</span>
+              <div className="library-drawer__actions">
+                <button
+                  className="settings-trigger"
+                  onClick={() => setDrawerPage((page) => page === 'libraries' ? 'settings' : 'libraries')}
+                  aria-label={drawerPage === 'libraries' ? 'Open settings' : 'Back to libraries'}
+                >{drawerPage === 'libraries' ? '⚙︎' : '←'}</button>
+                <button onClick={() => setMenuOpen(false)} aria-label="Close menu">×</button>
+              </div>
+            </div>
+            <p className="eyebrow">{drawerPage === 'libraries' ? 'YOUR LIBRARIES' : 'SETTINGS'}</p>
+            {drawerPage === 'libraries' ? (
+              <>
+                <nav>
+                  {preferences.showAllMedia && <button className={!activeView ? 'is-active' : ''} onClick={() => selectView(null)}><span>All Media</span><small>{!activeView ? visibleItems.length : ''}</small></button>}
+                  {visibleDrawerViews.map((view, index) => (
+                    <button key={view.id} className={activeView?.id === view.id ? 'is-active' : ''} onClick={() => selectView(view)}>
+                      <span>{view.name}</span><small>{String(index + 1).padStart(2, '0')}</small>
+                    </button>
+                  ))}
+                </nav>
+                <div className="library-drawer__footer"><span>{session?.username}</span><button onClick={disconnect}>SIGN OUT</button></div>
+              </>
+            ) : (
+              <div className="settings-panel">
+                <section className="settings-section">
+                  <h3>LIBRARIES</h3>
+                  <label className="setting-toggle"><span>Show All Media</span><input type="checkbox" checked={preferences.showAllMedia} onChange={(event) => updatePreferences({ showAllMedia: event.target.checked })} /></label>
+                  <p className="settings-hint">Reorder with the arrows. Hide any library with the visibility dot.</p>
+                  <div className="settings-library-list">
+                    {orderedViews.map((view, index) => {
+                      const hidden = preferences.hiddenLibraryIds.includes(view.id);
+                      return (
+                        <div className={hidden ? 'is-hidden' : ''} key={view.id}>
+                          <button className="library-visibility" onClick={() => toggleLibrary(view.id)} aria-label={`${hidden ? 'Show' : 'Hide'} ${view.name}`} aria-pressed={!hidden}>{hidden ? '○' : '●'}</button>
+                          <span>{view.name}</span>
+                          <button onClick={() => moveLibrary(view.id, -1)} disabled={index === 0} aria-label={`Move ${view.name} up`}>↑</button>
+                          <button onClick={() => moveLibrary(view.id, 1)} disabled={index === orderedViews.length - 1} aria-label={`Move ${view.name} down`}>↓</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="settings-section">
+                  <h3>SUBTITLES</h3>
+                  <label className="setting-select"><span>Color</span><select value={preferences.subtitleColor} onChange={(event) => updatePreferences({ subtitleColor: event.target.value as PrismPreferences['subtitleColor'] })}><option value="white">White</option><option value="warm">Warm white</option><option value="yellow">Cinema yellow</option><option value="cyan">Prism cyan</option></select></label>
+                  <label className="setting-select"><span>Size</span><select value={preferences.subtitleSize} onChange={(event) => updatePreferences({ subtitleSize: event.target.value as PrismPreferences['subtitleSize'] })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
+                  <label className="setting-select"><span>Background</span><select value={preferences.subtitleBackground} onChange={(event) => updatePreferences({ subtitleBackground: event.target.value as PrismPreferences['subtitleBackground'] })}><option value="none">None</option><option value="soft">Soft</option><option value="strong">Strong</option></select></label>
+                  <label className="setting-toggle"><span>English on foreign audio</span><input type="checkbox" checked={preferences.autoEnglishSubtitles} onChange={(event) => updatePreferences({ autoEnglishSubtitles: event.target.checked })} /></label>
+                </section>
+
+                <section className="settings-section">
+                  <h3>PLAYBACK & APPEARANCE</h3>
+                  <label className="setting-select"><span>Arrow-key skip</span><select value={preferences.skipSeconds} onChange={(event) => updatePreferences({ skipSeconds: Number(event.target.value) as PrismPreferences['skipSeconds'] })}><option value="10">10 seconds</option><option value="15">15 seconds</option><option value="30">30 seconds</option></select></label>
+                  <label className="setting-select"><span>Poster density</span><select value={preferences.gridDensity} onChange={(event) => updatePreferences({ gridDensity: event.target.value as PrismPreferences['gridDensity'] })}><option value="cinematic">Cinematic</option><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+                  <label className="setting-select"><span>Default sort</span><select value={preferences.defaultSort} onChange={(event) => { const mode = event.target.value as SortMode; updatePreferences({ defaultSort: mode }); setSortMode(mode); }}><option value="alphabetical">Alphabetical</option><option value="random">Random</option><option value="released">Date released</option></select></label>
+                  <label className="setting-toggle"><span>Reduce motion</span><input type="checkbox" checked={preferences.reducedMotion} onChange={(event) => updatePreferences({ reducedMotion: event.target.checked })} /></label>
+                </section>
+                <button className="settings-reset" onClick={() => { setPreferences(defaultPreferences); setSortMode(defaultPreferences.defaultSort); }}>RESET SETTINGS</button>
+              </div>
+            )}
           </aside>
         </>
       )}
