@@ -198,6 +198,7 @@ function MoreDetails({
               <div><small>BUDGET</small><strong>{formatMoney(details?.budget)}</strong></div>
               <div><small>BOX OFFICE</small><strong>{formatMoney(details?.revenue)}</strong></div>
             </div>
+            {details?.financialSource && <p className="financial-source">FINANCIAL DATA PROVIDED BY TMDB</p>}
           </section>
 
           <section className="more-section more-section--specs">
@@ -546,6 +547,10 @@ export default function App() {
   const [similarItems, setSimilarItems] = useState<MediaItem[]>([]);
   const [moreLoading, setMoreLoading] = useState(false);
   const [moreError, setMoreError] = useState('');
+  const [tmdbConfigured, setTmdbConfigured] = useState(false);
+  const [tmdbEditorOpen, setTmdbEditorOpen] = useState(false);
+  const [tmdbTokenDraft, setTmdbTokenDraft] = useState('');
+  const [tmdbStatus, setTmdbStatus] = useState('');
   const [seriesEpisodes, setSeriesEpisodes] = useState<MediaItem[]>([]);
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
@@ -557,6 +562,11 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(preferencesKey, JSON.stringify(preferences));
   }, [preferences]);
+
+  useEffect(() => {
+    if (!menuOpen || drawerPage !== 'settings') return;
+    void window.prismMetadata?.hasTmdbToken().then(setTmdbConfigured);
+  }, [drawerPage, menuOpen]);
 
   useEffect(() => {
     setPlaybackVersions([]);
@@ -585,9 +595,16 @@ export default function App() {
     let cancelled = false;
     setMoreLoading(true);
     setMoreError('');
-    Promise.all([getItemDetails(selected, session), getSimilarItems(selected, session)]).then(([details, similar]) => {
+    Promise.all([getItemDetails(selected, session), getSimilarItems(selected, session)]).then(async ([details, similar]) => {
       if (cancelled) return;
-      setMediaDetails(details);
+      const financials = await window.prismMetadata?.getTmdbMovie({ tmdbId: details.tmdbId, imdbId: details.imdbId });
+      if (cancelled) return;
+      setMediaDetails(financials ? {
+        ...details,
+        budget: financials.budget ?? details.budget,
+        revenue: financials.revenue ?? details.revenue,
+        financialSource: financials.source
+      } : details);
       setSimilarItems(similar);
     }).catch((reason: unknown) => {
       if (!cancelled) setMoreError(reason instanceof Error ? reason.message : 'The extended details could not be loaded.');
@@ -596,6 +613,19 @@ export default function App() {
     });
     return () => { cancelled = true; };
   }, [demo, moreOpen, selected, session]);
+
+  async function saveTmdbToken() {
+    setTmdbStatus('VERIFYING…');
+    const result = await window.prismMetadata?.saveTmdbToken(tmdbTokenDraft);
+    if (!result?.ok) {
+      setTmdbStatus(result?.error || 'Secure metadata storage is only available in the installed app.');
+      return;
+    }
+    setTmdbTokenDraft('');
+    setTmdbEditorOpen(false);
+    setTmdbConfigured(true);
+    setTmdbStatus('CONNECTED');
+  }
 
   useEffect(() => {
     setSeriesEpisodes([]);
@@ -826,6 +856,24 @@ export default function App() {
                   <label className="setting-select"><span>Size</span><select value={preferences.subtitleSize} onChange={(event) => updatePreferences({ subtitleSize: event.target.value as PrismPreferences['subtitleSize'] })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
                   <label className="setting-select"><span>Background</span><select value={preferences.subtitleBackground} onChange={(event) => updatePreferences({ subtitleBackground: event.target.value as PrismPreferences['subtitleBackground'] })}><option value="none">None</option><option value="soft">Soft</option><option value="strong">Strong</option></select></label>
                   <label className="setting-toggle"><span>English on foreign audio</span><input type="checkbox" checked={preferences.autoEnglishSubtitles} onChange={(event) => updatePreferences({ autoEnglishSubtitles: event.target.checked })} /></label>
+                </section>
+
+                <section className="settings-section">
+                  <h3>FILM METADATA</h3>
+                  <div className="metadata-connection">
+                    <span className={tmdbConfigured ? 'is-connected' : ''}>{tmdbConfigured ? 'TMDb connected' : 'TMDb not connected'}</span>
+                    <button onClick={() => { setTmdbEditorOpen((open) => !open); setTmdbStatus(''); }}>{tmdbConfigured ? 'REPLACE' : 'CONNECT'}</button>
+                  </div>
+                  {tmdbEditorOpen && (
+                    <div className="metadata-token-editor">
+                      <label htmlFor="tmdb-token">TMDb API Read Access Token</label>
+                      <input id="tmdb-token" type="password" value={tmdbTokenDraft} onChange={(event) => setTmdbTokenDraft(event.target.value)} autoComplete="off" spellCheck={false} />
+                      <button onClick={() => void saveTmdbToken()} disabled={!tmdbTokenDraft.trim()}>VERIFY & SAVE</button>
+                    </div>
+                  )}
+                  {tmdbStatus && <p className="metadata-status" role="status">{tmdbStatus}</p>}
+                  <p className="settings-hint">Adds reported budget and revenue. Your token is encrypted in macOS secure storage.</p>
+                  <p className="tmdb-attribution">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
                 </section>
 
                 <section className="settings-section">

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackVersions, getSeriesEpisodes } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -73,6 +73,17 @@ describe('playback selection', () => {
     const shows = await getLibrary({ serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' }, { id: 'shows', name: 'Shows', collectionType: 'tvshows' });
     expect(shows).toHaveLength(1);
     expect(shows[0].seriesIds).toEqual(['fallout-s1', 'fallout-s2']);
+  });
+
+  it('returns provider ids used for private TMDb enrichment', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ People: [], Studios: [], ProviderIds: { Tmdb: '22', Imdb: 'tt0325980' } })
+    }));
+
+    const details = await getItemDetails({ id: 'pirates' } as MediaItem, { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' });
+    expect(details.tmdbId).toBe('22');
+    expect(details.imdbId).toBe('tt0325980');
   });
 
   it('combines seasons and removes duplicate episode numbers', async () => {

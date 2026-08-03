@@ -67,4 +67,7 @@ export type MediaDetails = {
   tagline?: string;
   budget?: number;
   revenue?: number;
+  tmdbId?: string;
+  imdbId?: string;
+  financialSource?: 'TMDb';
 };

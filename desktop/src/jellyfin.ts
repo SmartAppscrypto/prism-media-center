@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.7.0"`
+    `Version="0.8.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -170,6 +170,7 @@ export async function getItemDetails(item: MediaItem, session: PrismSession): Pr
   );
   const people = (result.People as Array<Record<string, unknown>> | undefined) ?? [];
   const studios = (result.Studios as Array<Record<string, unknown>> | undefined) ?? [];
+  const providerIds = (result.ProviderIds as Record<string, string> | undefined) ?? {};
   const numeric = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
   return {
     people: people.map((person) => {
@@ -190,7 +191,9 @@ export async function getItemDetails(item: MediaItem, session: PrismSession): Pr
     criticRating: numeric(result.CriticRating),
     tagline: ((result.Taglines as string[] | undefined) ?? [])[0],
     budget: numeric(result.Budget),
-    revenue: numeric(result.Revenue) ?? numeric(result.BoxOffice)
+    revenue: numeric(result.Revenue) ?? numeric(result.BoxOffice),
+    tmdbId: providerIds.Tmdb,
+    imdbId: providerIds.Imdb
   };
 }
 
