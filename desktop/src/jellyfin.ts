@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.4.0"`
+    `Version="0.5.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -84,7 +84,7 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
     userId: session.userId,
     Recursive: 'true',
     IncludeItemTypes: itemTypes(view?.collectionType),
-    Fields: 'Overview,PrimaryImageAspectRatio,ProductionYear,RunTimeTicks,BackdropImageTags,ProviderIds',
+    Fields: 'Overview,PrimaryImageAspectRatio,ProductionYear,PremiereDate,RunTimeTicks,BackdropImageTags,ProviderIds',
     ImageTypeLimit: '1',
     EnableImageTypes: 'Primary,Backdrop',
     SortBy: 'SortName',
@@ -107,6 +107,7 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
       seriesIds: item.Type === 'Series' ? [id] : undefined,
       title: String(item.Name ?? 'Untitled'),
       year: typeof item.ProductionYear === 'number' ? item.ProductionYear : undefined,
+      releaseDate: typeof item.PremiereDate === 'string' ? item.PremiereDate : undefined,
       runtimeMinutes: typeof item.RunTimeTicks === 'number' ? Math.round(item.RunTimeTicks / 600_000_000) : undefined,
       overview: typeof item.Overview === 'string' ? item.Overview : undefined,
       type: (item.Type as MediaItem['type']) ?? 'Video',

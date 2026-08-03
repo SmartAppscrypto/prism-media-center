@@ -1,4 +1,4 @@
-import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getViews, signIn, subtitleUrl } from './jellyfin';
@@ -43,6 +43,11 @@ function formatClock(seconds: number) {
     : `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
 
+function titleInitial(title: string) {
+  const initial = title.trim().charAt(0).toUpperCase();
+  return /^[A-Z]$/.test(initial) ? initial : '#';
+}
+
 function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaItem) => void }) {
   const style = item.imageUrl
     ? { backgroundImage: `url("${item.imageUrl}")` }
@@ -55,7 +60,7 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
     </>
   );
   return onSelect ? (
-    <button className="poster" style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}`}>{artwork}</button>
+    <button className="poster" data-letter={titleInitial(item.title)} style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}`}>{artwork}</button>
   ) : (
     <div className="poster" style={style} aria-label={`${item.title} poster`}>{artwork}</div>
   );
@@ -357,6 +362,9 @@ export default function App() {
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [seriesError, setSeriesError] = useState('');
+  const [sortMode, setSortMode] = useState<'alphabetical' | 'random' | 'released'>('alphabetical');
+  const [randomNonce, setRandomNonce] = useState(0);
+  const wallRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     setPlaybackVersions([]);
@@ -414,6 +422,45 @@ export default function App() {
   }, [playingItem, selected]);
 
   const visibleItems = demo ? demoItems : items;
+  const sortedItems = useMemo(() => {
+    const result = [...visibleItems];
+    if (sortMode === 'released') {
+      const released = (item: MediaItem) => item.releaseDate ? Date.parse(item.releaseDate) : (item.year ?? 0) * 31_536_000_000;
+      return result.sort((a, b) => released(b) - released(a) || a.title.localeCompare(b.title));
+    }
+    if (sortMode === 'random') {
+      for (let index = result.length - 1; index > 0; index -= 1) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+      }
+      return result;
+    }
+    return result.sort((a, b) => a.title.localeCompare(b.title));
+  }, [randomNonce, sortMode, visibleItems]);
+  const availableLetters = useMemo(() => new Set(visibleItems.map((item) => titleInitial(item.title))), [visibleItems]);
+
+  function focusFirstPosterForLetter(letter: string) {
+    setSortMode('alphabetical');
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const poster = wallRef.current?.querySelector<HTMLButtonElement>(`.poster[data-letter="${letter}"]`);
+      poster?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      poster?.focus({ preventScroll: true });
+    }));
+  }
+
+  function navigatePosterGrid(event: ReactKeyboardEvent<HTMLElement>) {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const posters = Array.from(wallRef.current?.querySelectorAll<HTMLButtonElement>('button.poster') ?? []);
+    const current = posters.indexOf(event.target as HTMLButtonElement);
+    if (current < 0 || !posters.length) return;
+    const columnCount = Math.max(1, getComputedStyle(event.currentTarget).gridTemplateColumns.split(' ').length);
+    const offsets: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columnCount, ArrowDown: columnCount };
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? posters.length - 1 : current + offsets[event.key];
+    if (next < 0 || next >= posters.length) return;
+    event.preventDefault();
+    posters[next].focus();
+    posters[next].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
 
   function selectView(view: LibraryView | null) {
     if (!session) return;
@@ -450,9 +497,29 @@ export default function App() {
           {!demo && <button className="menu-trigger" onClick={() => setMenuOpen(true)} aria-label="Open library menu"><span /><span /><span /></button>}
           <button className="wordmark" onClick={() => setSelected(null)}>PRISM</button>
         </div>
-        <div className="header__right">
-          <span>{demo ? 'DEMO LIBRARY' : `${visibleItems.length} TITLES`}</span>
-          <button className="text-button" onClick={disconnect}>{demo ? 'CONNECT SERVER' : 'SIGN OUT'}</button>
+        <div className="header__tools" aria-label="Library navigation">
+          <nav className="alphabet-rail" aria-label="Jump by title">
+            {'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((letter) => (
+              <button key={letter} disabled={!availableLetters.has(letter)} onClick={() => focusFirstPosterForLetter(letter)} aria-label={`Jump to ${letter}`}>{letter}</button>
+            ))}
+          </nav>
+          <span className="title-count">{demo ? 'DEMO LIBRARY' : `${visibleItems.length} TITLES`}</span>
+          <label className="sort-control">
+            <span>SORT</span>
+            <select
+              value={sortMode}
+              onChange={(event) => {
+                const mode = event.target.value as typeof sortMode;
+                setSortMode(mode);
+                if (mode === 'random') setRandomNonce((nonce) => nonce + 1);
+              }}
+              aria-label="Sort library"
+            >
+              <option value="alphabetical">Alphabetical</option>
+              <option value="random">Random</option>
+              <option value="released">Date released</option>
+            </select>
+          </label>
         </div>
       </header>
 
@@ -478,8 +545,8 @@ export default function App() {
       {libraryError && <div className="library-error">{libraryError} <button onClick={disconnect}>Reconnect</button></div>}
       {!libraryError && (libraryLoading || !visibleItems.length) && <div className="loading">DEVELOPING {activeView?.name?.toUpperCase() || 'YOUR LIBRARY'}…</div>}
 
-      <section className="wall" aria-label="Media library">
-        {visibleItems.map((item) => <Poster key={item.id} item={item} onSelect={setSelected} />)}
+      <section ref={wallRef} className="wall" aria-label="Media library" onKeyDown={navigatePosterGrid}>
+        {sortedItems.map((item) => <Poster key={item.id} item={item} onSelect={setSelected} />)}
       </section>
 
       {selected && (

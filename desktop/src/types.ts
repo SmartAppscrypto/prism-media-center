@@ -10,6 +10,7 @@ export type MediaItem = {
   seriesIds?: string[];
   title: string;
   year?: number;
+  releaseDate?: string;
   seasonNumber?: number;
   episodeNumber?: number;
   runtimeMinutes?: number;
