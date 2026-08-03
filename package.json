@@ -1,0 +1,20 @@
+{
+  "name": "prism-media-center",
+  "private": true,
+  "version": "0.2.0",
+  "description": "A cinematic desktop client for a self-hosted Jellyfin media server.",
+  "workspaces": [
+    "desktop"
+  ],
+  "scripts": {
+    "dev": "npm --workspace desktop run dev",
+    "build": "npm --workspace desktop run build",
+    "test": "npm --workspace desktop run test",
+    "desktop": "npm --workspace desktop run desktop",
+    "package:mac": "npm --workspace desktop run package:mac",
+    "package:windows": "npm --workspace desktop run package:windows"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

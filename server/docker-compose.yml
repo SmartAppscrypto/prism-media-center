@@ -1,0 +1,19 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: prism-server
+    environment:
+      - TZ=${TZ:-America/New_York}
+      - JELLYFIN_PublishedServerUrl=${PRISM_SERVER_URL:-http://192.168.157.248:8096}
+    volumes:
+      - ./config:/config
+      - ./cache:/cache
+      - ${MEDIA_PATH:-/volume1/Media}:/media:ro
+    ports:
+      - "8096:8096/tcp"
+      - "7359:7359/udp"
+    # If your NAS has /dev/dri/renderD128, uncomment these two lines after
+    # completing the basic installation, then enable QSV/VA-API in Jellyfin.
+    # devices:
+    #   - /dev/dri:/dev/dri
+    restart: unless-stopped

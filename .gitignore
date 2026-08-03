@@ -1,0 +1,10 @@
+node_modules/
+dist/
+release/
+.DS_Store
+*.log
+*.tsbuildinfo
+.env
+server/config/
+server/cache/
+.repos/
