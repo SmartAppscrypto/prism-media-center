@@ -1,6 +1,6 @@
 # Install the Prism server on Synology
 
-Prism currently uses the official Jellyfin server image. These instructions target DSM 7 and Synology Container Manager.
+PRISM Server uses the Jellyfin backend with the PRISM web interface. These instructions target DSM 7 and Synology Container Manager.
 
 ## Before you begin
 
@@ -58,7 +58,7 @@ If the project log later reports `permission denied`, temporarily grant read acc
 7. Review the YAML preview and click **Done**.
 8. Choose to build and start the project.
 
-Container Manager will download the official `jellyfin/jellyfin:latest` image. When the project status becomes **Running**, open:
+Container Manager will download `ghcr.io/smartappscrypto/prism-server:latest`. When the project status becomes **Running**, open:
 
 ```text
 http://YOUR-NAS-IP:8096
@@ -100,8 +100,8 @@ Disable SSH again when finished.
 
 - Back up `/volume1/docker/prism/config`; it contains the Jellyfin database and settings.
 - The media itself is outside the container and is mounted read-only.
-- To update, stop the project, choose **Build** or **Update** so Container Manager pulls the current image, and start it again.
-- Back up `config` before an upgrade. Pin the image to a specific Jellyfin version instead of `latest` if you prefer controlled upgrades.
+- To update, choose **Build** or **Update** so Container Manager pulls the current PRISM Server image and recreates the container.
+- Back up `config` before an upgrade. Pin the PRISM Server image to a digest instead of `latest` if you prefer controlled upgrades.
 
 ## Troubleshooting
 

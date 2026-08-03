@@ -33,9 +33,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  if (process.platform === 'darwin') {
-    app.dock.setIcon(path.join(process.resourcesPath, 'icon.icns'));
-  }
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

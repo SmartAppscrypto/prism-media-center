@@ -1,6 +1,6 @@
 services:
   jellyfin:
-    image: jellyfin/jellyfin:latest
+    image: ghcr.io/smartappscrypto/prism-server:latest
     container_name: prism-server
     environment:
       - TZ=${TZ:-America/New_York}
