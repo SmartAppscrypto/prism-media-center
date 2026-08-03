@@ -3,6 +3,8 @@
 :root { color: #f5f3ef; background: #050506; font-family: 'Familjen Grotesk', system-ui, sans-serif; font-synthesis: none; }
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; min-width: 960px; height: 100%; margin: 0; overflow: hidden; }
+.window-drag-region { position: fixed; z-index: 100; top: 0; left: 78px; right: 0; height: 30px; user-select: none; app-region: drag; -webkit-app-region: drag; }
+button, input, video { app-region: no-drag; -webkit-app-region: no-drag; }
 button, input { font: inherit; }
 button { color: inherit; }
 

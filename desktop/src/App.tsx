@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { getLibrary, getPlaybackDetails, getViews, playbackUrl, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackDetails, getViews, signIn, subtitleUrl } from './jellyfin';
 import type { LibraryView, MediaItem, PrismSession, SubtitleTrack } from './types';
 
 const sessionKey = 'prism-session';
@@ -122,9 +122,36 @@ function Player({ item, session, onClose }: { item: MediaItem; session: PrismSes
     if (!video) return;
     let hls: Hls | undefined;
     let cancelled = false;
+    let usingDirectPlay = false;
+    let activeMediaSourceId = item.id;
+
+    const startAdaptivePlayback = (mediaSourceId: string) => {
+      usingDirectPlay = false;
+      setPlaybackError('');
+      const source = adaptivePlaybackUrl(item, session, mediaSourceId);
+      if (Hls.isSupported()) {
+        hls?.destroy();
+        hls = new Hls({ enableWorker: true });
+        hls.loadSource(source);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => setPaused(true)));
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) setPlaybackError('Playback could not start. This format may require a transcoder your server cannot provide.');
+        });
+      } else {
+        video.src = source;
+        void video.play().catch(() => setPaused(true));
+      }
+    };
+
+    const onVideoError = () => {
+      if (usingDirectPlay) startAdaptivePlayback(activeMediaSourceId);
+    };
+    video.addEventListener('error', onVideoError);
 
     getPlaybackDetails(item, session).then((details) => {
       if (cancelled) return;
+      activeMediaSourceId = details.mediaSourceId;
       setMediaSourceId(details.mediaSourceId);
       setSubtitleTracks(details.subtitles);
       const english = details.subtitles.find((track) => ['eng', 'en'].includes(track.language?.toLowerCase() ?? ''));
@@ -132,22 +159,21 @@ function Player({ item, session, onClose }: { item: MediaItem; session: PrismSes
       const automaticTrack = !audioIsEnglish ? english : details.subtitles.find((track) => track.isForced && ['eng', 'en'].includes(track.language?.toLowerCase() ?? ''));
       setSelectedSubtitle(automaticTrack?.index ?? null);
 
-      const source = playbackUrl(item, session, details.mediaSourceId);
-      if (Hls.isSupported()) {
-        hls = new Hls({ enableWorker: true });
-        hls.loadSource(source);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => setPaused(true)));
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) setPlaybackError('Playback could not start. Check the Jellyfin transcoding log.');
-        });
-      } else {
-        video.src = source;
+      const mimeType = directPlayMimeType(details);
+      if (mimeType && video.canPlayType(mimeType)) {
+        usingDirectPlay = true;
+        video.src = directPlaybackUrl(item, session, details);
         void video.play().catch(() => setPaused(true));
+      } else {
+        startAdaptivePlayback(details.mediaSourceId);
       }
     }).catch(() => setPlaybackError('Prism could not prepare this title for playback.'));
 
-    return () => { cancelled = true; hls?.destroy(); };
+    return () => {
+      cancelled = true;
+      video.removeEventListener('error', onVideoError);
+      hls?.destroy();
+    };
   }, [item, session]);
 
   useEffect(() => {
@@ -351,11 +377,13 @@ export default function App() {
     setSelected(null);
   }
 
-  if (!session && !demo) return <Connect onConnected={setSession} onDemo={() => setDemo(true)} />;
-  if (playing && selected && session) return <Player item={selected} session={session} onClose={() => setPlaying(false)} />;
+  const dragRegion = <div className="window-drag-region" aria-hidden="true" />;
+
+  if (!session && !demo) return <>{dragRegion}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
+  if (playing && selected && session) return <>{dragRegion}<Player item={selected} session={session} onClose={() => setPlaying(false)} /></>;
 
   return (
-    <main className={`library ${selected ? 'library--inspect' : ''}`}>
+    <><div className="window-drag-region" aria-hidden="true" /><main className={`library ${selected ? 'library--inspect' : ''}`}>
       <header>
         <div className="header__brand">
           {!demo && <button className="menu-trigger" onClick={() => setMenuOpen(true)} aria-label="Open library menu"><span /><span /><span /></button>}
@@ -417,6 +445,6 @@ export default function App() {
           </article>
         </section>
       )}
-    </main>
+    </main></>
   );
 }

@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.2.1"`
+    `Version="0.3.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -121,6 +121,8 @@ export async function getPlaybackDetails(item: MediaItem, session: PrismSession)
   const result = await api<{
     MediaSources?: Array<{
       Id?: string;
+      Path?: string;
+      Container?: string;
       MediaStreams?: Array<{
         Type?: string;
         Index?: number;
@@ -137,6 +139,7 @@ export async function getPlaybackDetails(item: MediaItem, session: PrismSession)
   const streams = source?.MediaStreams ?? [];
   const audio = streams.find((stream) => stream.Type === 'Audio' && stream.IsDefault)
     ?? streams.find((stream) => stream.Type === 'Audio');
+  const video = streams.find((stream) => stream.Type === 'Video');
   const textCodecs = new Set(['srt', 'subrip', 'ass', 'ssa', 'webvtt', 'vtt']);
   const subtitles = streams
     .filter((stream) => stream.Type === 'Subtitle' && typeof stream.Index === 'number' && textCodecs.has(String(stream.Codec).toLowerCase()))
@@ -149,12 +152,65 @@ export async function getPlaybackDetails(item: MediaItem, session: PrismSession)
     }));
   return {
     mediaSourceId: source?.Id || item.id,
+    path: source?.Path,
+    container: source?.Container,
+    videoCodec: video?.Codec,
+    audioCodec: audio?.Codec,
     audioLanguage: audio?.Language,
     subtitles
   };
 }
 
-export function playbackUrl(item: MediaItem, session: PrismSession, mediaSourceId = item.id) {
+function sourceExtension(details: PlaybackDetails) {
+  const match = details.path?.match(/\.([a-z0-9]+)$/i);
+  if (match) return match[1].toLowerCase();
+  return details.container?.split(',')[0].toLowerCase();
+}
+
+export function directPlayMimeType(details: PlaybackDetails) {
+  const extension = sourceExtension(details);
+  const videoCodecs: Record<string, string> = {
+    h264: 'avc1.42E01E',
+    hevc: 'hvc1',
+    h265: 'hvc1',
+    av1: 'av01.0.05M.08',
+    vp8: 'vp8',
+    vp9: 'vp09.00.10.08'
+  };
+  const audioCodecs: Record<string, string> = {
+    aac: 'mp4a.40.2',
+    mp3: 'mp3',
+    opus: 'opus',
+    vorbis: 'vorbis',
+    ac3: 'ac-3',
+    eac3: 'ec-3'
+  };
+  const videoCodec = videoCodecs[details.videoCodec?.toLowerCase() ?? ''];
+  const audioCodec = details.audioCodec ? audioCodecs[details.audioCodec.toLowerCase()] : undefined;
+  if (!videoCodec || (details.audioCodec && !audioCodec)) return undefined;
+  const codecs = audioCodec ? `${videoCodec}, ${audioCodec}` : videoCodec;
+
+  if (['mp4', 'm4v', 'mov'].includes(extension ?? '')) {
+    return `video/mp4; codecs="${codecs}"`;
+  }
+  if (extension === 'webm' && ['vp8', 'vp9', 'av1'].includes(details.videoCodec?.toLowerCase() ?? '')) {
+    return `video/webm; codecs="${codecs}"`;
+  }
+  return undefined;
+}
+
+export function directPlaybackUrl(item: MediaItem, session: PrismSession, details: PlaybackDetails) {
+  const extension = sourceExtension(details) || 'mp4';
+  const params = new URLSearchParams({
+    api_key: session.accessToken,
+    Static: 'true',
+    DeviceId: deviceId(),
+    MediaSourceId: details.mediaSourceId
+  });
+  return `${session.serverUrl}/Videos/${item.id}/stream.${encodeURIComponent(extension)}?${params}`;
+}
+
+export function adaptivePlaybackUrl(item: MediaItem, session: PrismSession, mediaSourceId = item.id) {
   const params = new URLSearchParams({
     api_key: session.accessToken,
     DeviceId: deviceId(),
@@ -163,13 +219,13 @@ export function playbackUrl(item: MediaItem, session: PrismSession, mediaSourceI
     VideoCodec: 'h264',
     AudioCodec: 'aac',
     AudioBitrate: '192000',
-    MaxAudioChannels: '2',
+    MaxAudioChannels: '8',
     TranscodingAudioChannels: '2',
     SegmentContainer: 'ts',
     MinSegments: '1',
     BreakOnNonKeyFrames: 'true',
     AllowVideoStreamCopy: 'true',
-    AllowAudioStreamCopy: 'false',
+    AllowAudioStreamCopy: 'true',
     EnableAutoStreamCopy: 'true'
   });
   return `${session.serverUrl}/Videos/${item.id}/master.m3u8?${params}`;
