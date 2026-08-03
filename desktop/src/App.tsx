@@ -1,10 +1,30 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackDetails, getViews, signIn, subtitleUrl } from './jellyfin';
-import type { LibraryView, MediaItem, PrismSession, SubtitleTrack } from './types';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getLibrary, getPlaybackDetails, getPlaybackVersions, getViews, signIn, subtitleUrl } from './jellyfin';
+import type { LibraryView, MediaItem, PlaybackDetails, PrismSession, SubtitleTrack } from './types';
 
 const sessionKey = 'prism-session';
+
+function windowDragProps() {
+  return {
+    onPointerDown(event: ReactPointerEvent<HTMLElement>) {
+      if (event.button !== 0 || (event.target as HTMLElement).closest('button, input, select, a')) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      window.prismWindow?.startDrag(event.screenX, event.screenY);
+    },
+    onPointerMove(event: ReactPointerEvent<HTMLElement>) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) window.prismWindow?.moveDrag(event.screenX, event.screenY);
+    },
+    onPointerUp(event: ReactPointerEvent<HTMLElement>) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      window.prismWindow?.endDrag();
+    },
+    onPointerCancel() {
+      window.prismWindow?.endDrag();
+    }
+  };
+}
 
 function formatRuntime(minutes?: number) {
   if (!minutes) return '';
@@ -80,7 +100,7 @@ function Connect({ onConnected, onDemo }: { onConnected: (session: PrismSession)
   );
 }
 
-function Player({ item, session, onClose }: { item: MediaItem; session: PrismSession; onClose: () => void }) {
+function Player({ item, session, mediaSourceId: preferredMediaSourceId, onClose }: { item: MediaItem; session: PrismSession; mediaSourceId?: string; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const idleTimerRef = useRef<number | undefined>(undefined);
   const [paused, setPaused] = useState(false);
@@ -149,7 +169,7 @@ function Player({ item, session, onClose }: { item: MediaItem; session: PrismSes
     };
     video.addEventListener('error', onVideoError);
 
-    getPlaybackDetails(item, session).then((details) => {
+    getPlaybackDetails(item, session, preferredMediaSourceId).then((details) => {
       if (cancelled) return;
       activeMediaSourceId = details.mediaSourceId;
       setMediaSourceId(details.mediaSourceId);
@@ -174,7 +194,7 @@ function Player({ item, session, onClose }: { item: MediaItem; session: PrismSes
       video.removeEventListener('error', onVideoError);
       hls?.destroy();
     };
-  }, [item, session]);
+  }, [item, preferredMediaSourceId, session]);
 
   useEffect(() => {
     Array.from(videoRef.current?.textTracks ?? []).forEach((track, index) => {
@@ -331,6 +351,21 @@ export default function App() {
   const [activeView, setActiveView] = useState<LibraryView | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [libraryLoading, setLibraryLoading] = useState(false);
+  const [playbackVersions, setPlaybackVersions] = useState<PlaybackDetails[]>([]);
+  const [selectedMediaSourceId, setSelectedMediaSourceId] = useState<string | undefined>();
+
+  useEffect(() => {
+    setPlaybackVersions([]);
+    setSelectedMediaSourceId(undefined);
+    if (!selected || !session || selected.type === 'Series' || selected.type === 'MusicAlbum' || selected.type === 'Audio') return;
+    let cancelled = false;
+    getPlaybackVersions(selected, session).then((versions) => {
+      if (cancelled) return;
+      setPlaybackVersions(versions);
+      setSelectedMediaSourceId(versions[0]?.mediaSourceId);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [selected, session]);
 
   useEffect(() => {
     if (!session) return;
@@ -377,14 +412,14 @@ export default function App() {
     setSelected(null);
   }
 
-  const dragRegion = <div className="window-drag-region" aria-hidden="true" />;
+  const dragRegion = <div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />;
 
   if (!session && !demo) return <>{dragRegion}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
-  if (playing && selected && session) return <>{dragRegion}<Player item={selected} session={session} onClose={() => setPlaying(false)} /></>;
+  if (playing && selected && session) return <>{dragRegion}<Player item={selected} session={session} mediaSourceId={selectedMediaSourceId} onClose={() => setPlaying(false)} /></>;
 
   return (
-    <><div className="window-drag-region" aria-hidden="true" /><main className={`library ${selected ? 'library--inspect' : ''}`}>
-      <header>
+    <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library ${selected ? 'library--inspect' : ''}`}>
+      <header {...windowDragProps()}>
         <div className="header__brand">
           {!demo && <button className="menu-trigger" onClick={() => setMenuOpen(true)} aria-label="Open library menu"><span /><span /><span /></button>}
           <button className="wordmark" onClick={() => setSelected(null)}>PRISM</button>
@@ -440,7 +475,19 @@ export default function App() {
             ) : selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
               <button className="play play--disabled" disabled><span>♫</span> MUSIC PLAYBACK NEXT</button>
             ) : (
-              <button className="play" onClick={() => setPlaying(true)}><span>▶</span> PLAY</button>
+              <div className="playback-actions">
+                <button className="play" onClick={() => setPlaying(true)}><span>▶</span> PLAY</button>
+                {playbackVersions.length > 1 && (
+                  <label className="version-picker">
+                    <span>VERSION</span>
+                    <select value={selectedMediaSourceId} onChange={(event) => setSelectedMediaSourceId(event.target.value)} aria-label="Playback version">
+                      {playbackVersions.map((version) => (
+                        <option key={version.mediaSourceId} value={version.mediaSourceId}>{version.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
             )}
           </article>
         </section>

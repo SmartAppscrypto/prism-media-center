@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.3.0"`
+    `Version="0.3.1"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -117,26 +117,37 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
   });
 }
 
-export async function getPlaybackDetails(item: MediaItem, session: PrismSession): Promise<PlaybackDetails> {
-  const result = await api<{
-    MediaSources?: Array<{
-      Id?: string;
-      Path?: string;
-      Container?: string;
-      MediaStreams?: Array<{
-        Type?: string;
-        Index?: number;
-        Language?: string;
-        DisplayLanguage?: string;
-        DisplayTitle?: string;
-        Codec?: string;
-        IsDefault?: boolean;
-        IsForced?: boolean;
-      }>;
-    }>;
-  }>(session.serverUrl, `/Items/${item.id}/PlaybackInfo?UserId=${encodeURIComponent(session.userId)}`, {}, session.accessToken);
-  const source = result.MediaSources?.[0];
-  const streams = source?.MediaStreams ?? [];
+type JellyfinMediaStream = {
+  Type?: string;
+  Index?: number;
+  Language?: string;
+  DisplayLanguage?: string;
+  DisplayTitle?: string;
+  Codec?: string;
+  Width?: number;
+  Height?: number;
+  IsDefault?: boolean;
+  IsForced?: boolean;
+};
+
+type JellyfinMediaSource = {
+  Id?: string;
+  Name?: string;
+  Path?: string;
+  Container?: string;
+  MediaStreams?: JellyfinMediaStream[];
+};
+
+function versionLabel(source: JellyfinMediaSource, video?: JellyfinMediaStream) {
+  if (source.Name?.trim()) return source.Name.trim();
+  const filename = source.Path?.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '').trim();
+  if (filename) return filename;
+  if (video?.Height) return video.Height >= 2160 ? '4K' : `${video.Height}p`;
+  return 'Default';
+}
+
+function mapPlaybackDetails(item: MediaItem, source: JellyfinMediaSource): PlaybackDetails {
+  const streams = source.MediaStreams ?? [];
   const audio = streams.find((stream) => stream.Type === 'Audio' && stream.IsDefault)
     ?? streams.find((stream) => stream.Type === 'Audio');
   const video = streams.find((stream) => stream.Type === 'Video');
@@ -151,14 +162,30 @@ export async function getPlaybackDetails(item: MediaItem, session: PrismSession)
       isForced: Boolean(stream.IsForced)
     }));
   return {
-    mediaSourceId: source?.Id || item.id,
-    path: source?.Path,
-    container: source?.Container,
+    mediaSourceId: source.Id || item.id,
+    label: versionLabel(source, video),
+    path: source.Path,
+    container: source.Container,
     videoCodec: video?.Codec,
     audioCodec: audio?.Codec,
+    width: video?.Width,
+    height: video?.Height,
     audioLanguage: audio?.Language,
     subtitles
   };
+}
+
+export async function getPlaybackVersions(item: MediaItem, session: PrismSession): Promise<PlaybackDetails[]> {
+  const result = await api<{
+    MediaSources?: JellyfinMediaSource[];
+  }>(session.serverUrl, `/Items/${item.id}/PlaybackInfo?UserId=${encodeURIComponent(session.userId)}`, {}, session.accessToken);
+  const sources = result.MediaSources?.filter((source) => !/^\[?trailer(?:-|\]|\s)/i.test(source.Name?.trim() ?? '')) ?? [];
+  return (sources.length ? sources : result.MediaSources?.slice(0, 1) ?? [{}]).map((source) => mapPlaybackDetails(item, source));
+}
+
+export async function getPlaybackDetails(item: MediaItem, session: PrismSession, mediaSourceId?: string): Promise<PlaybackDetails> {
+  const versions = await getPlaybackVersions(item, session);
+  return versions.find((version) => version.mediaSourceId === mediaSourceId) ?? versions[0];
 }
 
 function sourceExtension(details: PlaybackDetails) {

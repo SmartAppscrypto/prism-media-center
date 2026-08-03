@@ -2,7 +2,7 @@
   "name": "@prism/desktop",
   "private": true,
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Prism desktop media client",
   "author": "Prism Media",
   "main": "electron/main.cjs",

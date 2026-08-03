@@ -33,10 +33,13 @@ export type SubtitleTrack = {
 
 export type PlaybackDetails = {
   mediaSourceId: string;
+  label: string;
   path?: string;
   container?: string;
   videoCodec?: string;
   audioCodec?: string;
+  width?: number;
+  height?: number;
   audioLanguage?: string;
   subtitles: SubtitleTrack[];
 };

@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType } from './jellyfin';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getPlaybackVersions } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
   mediaSourceId: 'source',
+  label: '1080p',
   path: '/media/Home Movies/clip.mp4',
   container: 'mov,mp4,m4a,3gp,3g2,mj2',
   videoCodec: 'h264',
@@ -12,6 +13,8 @@ const baseDetails: PlaybackDetails = {
 };
 
 describe('playback selection', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('identifies browser-compatible H.264/AAC MP4 files for direct play', () => {
     expect(directPlayMimeType(baseDetails)).toBe('video/mp4; codecs="avc1.42E01E, mp4a.40.2"');
   });
@@ -37,5 +40,24 @@ describe('playback selection', () => {
     expect(url).toContain('/Videos/item/stream.mp4?');
     expect(url).toContain('Static=true');
     expect(url).toContain('MediaSourceId=source');
+  });
+
+  it('returns selectable versions while excluding grouped trailers', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        MediaSources: [
+          { Id: '4k', Name: 'Feature - 4K', Path: '/media/Feature - 4K.mkv', MediaStreams: [{ Type: 'Video', Codec: 'hevc', Height: 2160 }] },
+          { Id: 'open-matte', Name: 'Feature - Open Matte', Path: '/media/Feature - Open Matte.mkv', MediaStreams: [{ Type: 'Video', Codec: 'h264', Height: 1080 }] },
+          { Id: 'trailer', Name: '[Trailer-Theatrical Trailer]', Path: '/media/Feature[Trailer-Theatrical Trailer].mov', MediaStreams: [{ Type: 'Video', Codec: 'h264' }] }
+        ]
+      })
+    }));
+
+    const versions = await getPlaybackVersions({ id: 'item' } as MediaItem, { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' });
+    expect(versions.map((version) => [version.mediaSourceId, version.label])).toEqual([
+      ['4k', 'Feature - 4K'],
+      ['open-matte', 'Feature - Open Matte']
+    ]);
   });
 });
