@@ -1,11 +1,16 @@
 const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { findShotOnWhatPage, slugify } = require('./shotonwhat.cjs');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const windowDrags = new Map();
 const tmdbCacheMaxAge = 30 * 24 * 60 * 60 * 1000;
+const productionMissMaxAge = 30 * 24 * 60 * 60 * 1000;
+const productionLookups = new Map();
+let productionCache;
+let productionScanRunning = false;
 
 function prismDataPath(filename) {
   return path.join(app.getPath('userData'), filename);
@@ -19,6 +24,35 @@ async function readJson(filename, fallback) {
 async function writeJson(filename, value) {
   await fs.mkdir(app.getPath('userData'), { recursive: true });
   await fs.writeFile(prismDataPath(filename), JSON.stringify(value), { mode: 0o600 });
+}
+
+async function getProductionCache() {
+  if (!productionCache) productionCache = await readJson('prism-production-cache.json', {});
+  return productionCache;
+}
+
+function productionKey(item) {
+  if (typeof item?.title !== 'string' || !Number.isInteger(item?.year) || item.year < 1880 || item.year > 2200) return '';
+  return `${slugify(item.title)}:${item.year}`;
+}
+
+async function lookupProduction(item, scrapeIfMissing) {
+  const key = productionKey(item);
+  if (!key) return null;
+  const cache = await getProductionCache();
+  const cached = cache[key];
+  if (cached?.data) return cached.data;
+  if (cached && Date.now() - cached.checkedAt < productionMissMaxAge) return null;
+  if (!scrapeIfMissing) return null;
+  if (productionLookups.has(key)) return productionLookups.get(key);
+
+  const lookup = findShotOnWhatPage(item.title, item.year).then(async (data) => {
+    cache[key] = { checkedAt: Date.now(), data };
+    await writeJson('prism-production-cache.json', cache);
+    return data;
+  }).finally(() => productionLookups.delete(key));
+  productionLookups.set(key, lookup);
+  return lookup;
 }
 
 async function readTmdbToken() {
@@ -89,6 +123,49 @@ ipcMain.handle('prism-tmdb-movie', async (_event, identifiers) => {
     return data;
   } catch {
     return null;
+  }
+});
+
+ipcMain.handle('prism-production-get', async (_event, item) => {
+  try { return await lookupProduction(item, Boolean(item?.scrapeIfMissing)); }
+  catch { return null; }
+});
+
+ipcMain.handle('prism-production-scan', async (event, rawItems) => {
+  if (productionScanRunning) return { ok: false, error: 'A production scan is already running.' };
+  const items = Array.isArray(rawItems) ? rawItems
+    .filter((item) => productionKey(item))
+    .slice(0, 5000) : [];
+  productionScanRunning = true;
+  let found = 0;
+  let missing = 0;
+  let skipped = 0;
+  try {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      const cache = await getProductionCache();
+      const cached = cache[productionKey(item)];
+      if (cached?.data || (cached && Date.now() - cached.checkedAt < productionMissMaxAge)) {
+        skipped += 1;
+      } else {
+        const data = await lookupProduction(item, true);
+        if (data) found += 1;
+        else missing += 1;
+      }
+      event.sender.send('prism-production-progress', {
+        current: index + 1,
+        total: items.length,
+        found,
+        missing,
+        skipped,
+        title: item.title
+      });
+    }
+    return { ok: true, total: items.length, found, missing, skipped };
+  } catch (reason) {
+    return { ok: false, error: reason?.code === 'RATE_LIMITED' ? 'ShotOnWhat asked PRISM to pause. Try again later.' : 'The production scan stopped because the source could not be reached.' };
+  } finally {
+    productionScanRunning = false;
   }
 });
 

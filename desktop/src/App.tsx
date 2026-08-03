@@ -2,7 +2,7 @@ import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPo
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, signIn, subtitleUrl } from './jellyfin';
-import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, SubtitleTrack } from './types';
+import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, SubtitleTrack } from './types';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -137,6 +137,7 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
 function MoreDetails({
   item,
   details,
+  production,
   versions,
   similar,
   loading,
@@ -146,6 +147,7 @@ function MoreDetails({
 }: {
   item: MediaItem;
   details: MediaDetails | null;
+  production: ProductionDetails | null;
   versions: PlaybackDetails[];
   similar: MediaItem[];
   loading: boolean;
@@ -201,8 +203,37 @@ function MoreDetails({
             {details?.financialSource && <p className="financial-source">FINANCIAL DATA PROVIDED BY TMDB</p>}
           </section>
 
+          <section className="more-section more-section--production-format">
+            <p className="eyebrow">PRODUCTION FORMAT</p>
+            {production ? (
+              <>
+                <dl className="production-spec-list">
+                  {[
+                    ['CINEMATOGRAPHY', production.cinematographers],
+                    ['CAMERAS', production.cameras],
+                    ['LENSES', production.lenses],
+                    ['LENS MAKERS', production.lensManufacturers],
+                    ['ACQUISITION', production.acquisition],
+                    ['CAMERA APERTURE', production.cameraAperture],
+                    ['FILM STOCK', production.filmStock],
+                    ['FILM GAUGE', production.filmGauge],
+                    ['CAPTURE RESOLUTION', production.captureResolution],
+                    ['CAPTURE FORMAT', production.captureFormats],
+                    ['PROJECT FORMAT', production.projectResolution],
+                    ['FRAME RATE', production.frameRate],
+                    ['FINISHING', production.finishingProcess],
+                    ['NATIVE ASPECT RATIO', production.aspectRatio]
+                  ].filter(([, values]) => values.length).map(([label, values]) => (
+                    <div key={label as string}><dt>{label}</dt><dd>{(values as string[]).join(' · ')}</dd></div>
+                  ))}
+                </dl>
+                <a className="production-source" href={production.sourceUrl} target="_blank" rel="noreferrer">COMMUNITY DATA FROM SHOTONWHAT ↗</a>
+              </>
+            ) : <p className="more-page__empty">No production format was found for this title. PRISM will check again during the next missing-data scan.</p>}
+          </section>
+
           <section className="more-section more-section--specs">
-            <p className="eyebrow">TECHNICAL SPECIFICATIONS</p>
+            <p className="eyebrow">YOUR COPY</p>
             <div className="spec-grid">
               {versions.map((version) => (
                 <article key={version.mediaSourceId}>
@@ -544,6 +575,7 @@ export default function App() {
   const [selectedMediaSourceId, setSelectedMediaSourceId] = useState<string | undefined>();
   const [moreOpen, setMoreOpen] = useState(false);
   const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(null);
+  const [productionDetails, setProductionDetails] = useState<ProductionDetails | null>(null);
   const [similarItems, setSimilarItems] = useState<MediaItem[]>([]);
   const [moreLoading, setMoreLoading] = useState(false);
   const [moreError, setMoreError] = useState('');
@@ -551,6 +583,9 @@ export default function App() {
   const [tmdbEditorOpen, setTmdbEditorOpen] = useState(false);
   const [tmdbTokenDraft, setTmdbTokenDraft] = useState('');
   const [tmdbStatus, setTmdbStatus] = useState('');
+  const [productionScan, setProductionScan] = useState<ProductionScanProgress | null>(null);
+  const [productionScanRunning, setProductionScanRunning] = useState(false);
+  const [productionScanStatus, setProductionScanStatus] = useState('');
   const [seriesEpisodes, setSeriesEpisodes] = useState<MediaItem[]>([]);
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
@@ -568,11 +603,14 @@ export default function App() {
     void window.prismMetadata?.hasTmdbToken().then(setTmdbConfigured);
   }, [drawerPage, menuOpen]);
 
+  useEffect(() => window.prismMetadata?.onProductionProgress(setProductionScan), []);
+
   useEffect(() => {
     setPlaybackVersions([]);
     setSelectedMediaSourceId(undefined);
     setMoreOpen(false);
     setMediaDetails(null);
+    setProductionDetails(null);
     setSimilarItems([]);
     setMoreError('');
     if (!selected || !session || selected.type === 'Series' || selected.type === 'MusicAlbum' || selected.type === 'Audio') return;
@@ -597,7 +635,10 @@ export default function App() {
     setMoreError('');
     Promise.all([getItemDetails(selected, session), getSimilarItems(selected, session)]).then(async ([details, similar]) => {
       if (cancelled) return;
-      const financials = await window.prismMetadata?.getTmdbMovie({ tmdbId: details.tmdbId, imdbId: details.imdbId });
+      const [financials, production] = await Promise.all([
+        window.prismMetadata?.getTmdbMovie({ tmdbId: details.tmdbId, imdbId: details.imdbId }),
+        window.prismMetadata?.getProduction({ title: selected.title, year: selected.year, scrapeIfMissing: true })
+      ]);
       if (cancelled) return;
       setMediaDetails(financials ? {
         ...details,
@@ -605,6 +646,7 @@ export default function App() {
         revenue: financials.revenue ?? details.revenue,
         financialSource: financials.source
       } : details);
+      setProductionDetails(production ?? null);
       setSimilarItems(similar);
     }).catch((reason: unknown) => {
       if (!cancelled) setMoreError(reason instanceof Error ? reason.message : 'The extended details could not be loaded.');
@@ -625,6 +667,30 @@ export default function App() {
     setTmdbEditorOpen(false);
     setTmdbConfigured(true);
     setTmdbStatus('CONNECTED');
+  }
+
+  async function scanMissingProductionData() {
+    if (!session || !window.prismMetadata) {
+      setProductionScanStatus('Scanning is available in the installed app while connected to your server.');
+      return;
+    }
+    setProductionScanRunning(true);
+    setProductionScan(null);
+    setProductionScanStatus('PREPARING MOVIE LIBRARY…');
+    try {
+      const movieView = views.find((view) => view.collectionType === 'movies' || view.name.toLowerCase() === 'movies');
+      const movies = activeView?.id === movieView?.id ? items : await getLibrary(session, movieView);
+      const targets = movies.filter((item) => item.type === 'Movie' && item.year).map((item) => ({ title: item.title, year: item.year }));
+      setProductionScanStatus('SCANNING MISSING TITLES…');
+      const result = await window.prismMetadata.scanProduction(targets);
+      setProductionScanStatus(result.ok
+        ? `COMPLETE · ${result.found || 0} FOUND · ${result.skipped || 0} ALREADY CACHED · ${result.missing || 0} UNAVAILABLE`
+        : result.error || 'The scan could not be completed.');
+    } catch {
+      setProductionScanStatus('The movie library could not be prepared for scanning.');
+    } finally {
+      setProductionScanRunning(false);
+    }
   }
 
   useEffect(() => {
@@ -874,6 +940,18 @@ export default function App() {
                   {tmdbStatus && <p className="metadata-status" role="status">{tmdbStatus}</p>}
                   <p className="settings-hint">Adds reported budget and revenue. Your token is encrypted in macOS secure storage.</p>
                   <p className="tmdb-attribution">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+                  <div className="production-scan-control">
+                    <div><strong>Production formats</strong><span>Camera, lenses, film stock and process</span></div>
+                    <button onClick={() => void scanMissingProductionData()} disabled={productionScanRunning}>{productionScanRunning ? 'SCANNING' : 'SCAN MISSING'}</button>
+                  </div>
+                  {productionScanRunning && productionScan && (
+                    <div className="production-progress" aria-live="polite">
+                      <span style={{ width: `${Math.round((productionScan.current / Math.max(1, productionScan.total)) * 100)}%` }} />
+                      <small>{productionScan.current} / {productionScan.total} · {productionScan.title}</small>
+                    </div>
+                  )}
+                  {productionScanStatus && <p className="production-scan-status" role="status">{productionScanStatus}</p>}
+                  <p className="settings-hint">Checks only uncached or previously missing films, one request at a time. Community data from ShotOnWhat.</p>
                 </section>
 
                 <section className="settings-section">
@@ -907,6 +985,7 @@ export default function App() {
             <MoreDetails
               item={selected}
               details={mediaDetails}
+              production={productionDetails}
               versions={playbackVersions}
               similar={similarItems}
               loading={moreLoading}

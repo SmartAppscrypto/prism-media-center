@@ -22,7 +22,8 @@ describe('Prism shell', () => {
 
     const morePage = screen.getByRole('region', { name: 'More about The Long Meridian' });
     expect(morePage).toBeInTheDocument();
-    expect(screen.getByText('TECHNICAL SPECIFICATIONS')).toBeInTheDocument();
+    expect(screen.getByText('PRODUCTION FORMAT')).toBeInTheDocument();
+    expect(screen.getByText('YOUR COPY')).toBeInTheDocument();
     expect(within(morePage).getByRole('button', { name: 'Open Vermilion Coast' })).toBeInTheDocument();
     fireEvent.click(within(morePage).getByRole('button', { name: 'Open Vermilion Coast' }));
     expect(screen.getByRole('heading', { name: 'Vermilion Coast' })).toBeInTheDocument();

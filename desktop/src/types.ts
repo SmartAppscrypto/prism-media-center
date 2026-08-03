@@ -71,3 +71,31 @@ export type MediaDetails = {
   imdbId?: string;
   financialSource?: 'TMDb';
 };
+
+export type ProductionDetails = {
+  acquisition: string[];
+  cameras: string[];
+  lenses: string[];
+  lensManufacturers: string[];
+  cameraAperture: string[];
+  filmStock: string[];
+  filmGauge: string[];
+  captureResolution: string[];
+  captureFormats: string[];
+  projectResolution: string[];
+  frameRate: string[];
+  finishingProcess: string[];
+  aspectRatio: string[];
+  cinematographers: string[];
+  sourceUrl: string;
+  source: 'ShotOnWhat';
+};
+
+export type ProductionScanProgress = {
+  current: number;
+  total: number;
+  found: number;
+  missing: number;
+  skipped: number;
+  title: string;
+};
