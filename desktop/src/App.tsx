@@ -5,11 +5,12 @@ import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
 import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
-import { compareTitles, titleInitial } from './sorting';
+import { compareArtistsThenTitles, compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
 import { analyseFrequencyData, type AudioBands } from './audioReactive';
 import { getAlbumMetadata } from './musicbrainz';
 import { activeLyricIndex, estimatedLyricIndex, estimatedLyricStart, resolveTrackLyrics } from './lyrics';
+import { playUiTone } from './uiSounds';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -147,7 +148,14 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
   );
   const className = `poster ${isAlbum ? 'poster--album' : ''}`;
   return onSelect ? (
-    <button className={className} data-letter={titleInitial(item.title)} style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}${item.artist ? ` by ${item.artist}` : ''}`}>{artwork}</button>
+    <button
+      className={className}
+      data-letter={titleInitial(isAlbum ? item.artist || item.title : item.title)}
+      style={style}
+      onPointerEnter={() => { if (item.type === 'Movie') playUiTone('hover'); }}
+      onClick={() => onSelect(item)}
+      aria-label={`Open ${item.title}${item.artist ? ` by ${item.artist}` : ''}`}
+    >{artwork}</button>
   ) : (
     <div className={className} style={style} aria-label={`${item.title} ${isAlbum ? 'album cover' : 'poster'}`}>{artwork}</div>
   );
@@ -200,6 +208,8 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   const [lyricsStatus, setLyricsStatus] = useState('');
   const lyricLineRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const compactLineRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const lyricsViewportRef = useRef<HTMLDivElement>(null);
+  const compactViewportRef = useRef<HTMLDivElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [status, setStatus] = useState('DEVELOPING TRACK LIST…');
@@ -341,14 +351,21 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
 
   useEffect(() => {
     if (activeLine < 0) return;
-    lyricLineRefs.current[activeLine]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    compactLineRefs.current[activeLine]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const centerLine = (viewport: HTMLDivElement | null, line: HTMLButtonElement | null) => {
+      if (!viewport || !line) return;
+      const top = Math.max(0, line.offsetTop - (viewport.clientHeight - line.offsetHeight) / 2);
+      if (Math.abs(viewport.scrollTop - top) < 3) return;
+      viewport.scrollTo({ top, behavior: 'smooth' });
+    };
+    centerLine(lyricsViewportRef.current, lyricLineRefs.current[activeLine]);
+    centerLine(compactViewportRef.current, compactLineRefs.current[activeLine]);
   }, [activeLine]);
 
   async function togglePlayback() {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
     if (audio.paused) {
+      playUiTone('play');
       autoplayRef.current = true;
       await audio.play().catch(() => setStatus('PLAYBACK COULD NOT START'));
     } else audio.pause();
@@ -433,7 +450,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H3v4M13 3h4v4M17 13v4h-4M7 17H3v-4" /></svg>
               </button>
             </div>
-            <div className={`compact-lyrics__lines ${lyrics?.synced ? 'is-synced' : ''}`} aria-live="polite">
+            <div ref={compactViewportRef} className={`compact-lyrics__lines ${lyrics?.synced ? 'is-synced' : ''}`} aria-live="polite">
               {lyricsLoading && <p>FINDING THE WORDS…</p>}
               {!lyricsLoading && lyrics?.instrumental && <p>◇ &nbsp; INSTRUMENTAL</p>}
               {!lyricsLoading && lyricsStatus && <p>{lyricsStatus}</p>}
@@ -455,7 +472,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
             <button onClick={() => setLyricsExpanded(false)} aria-label="Return to compact lyrics"><span aria-hidden="true">←</span><span>BACK TO ALBUM</span></button>
             <div><strong>{currentTrack?.title || album.title}</strong><small>{currentTrack?.artist || album.artist} · {lyrics?.source || 'PRISM LYRICS'}</small></div>
           </div>
-          <div className={`lyrics-stage__lines ${lyrics?.synced ? 'is-synced' : 'is-plain'}`} aria-live="polite">
+          <div ref={lyricsViewportRef} className={`lyrics-stage__lines ${lyrics?.synced ? 'is-synced' : 'is-plain'}`} aria-live="polite">
             {lyricsLoading && <p className="lyrics-stage__message">FINDING THE WORDS…</p>}
             {!lyricsLoading && lyrics?.instrumental && <p className="lyrics-stage__instrumental"><span>◇</span>INSTRUMENTAL</p>}
             {!lyricsLoading && lyricsStatus && <p className="lyrics-stage__message">{lyricsStatus}</p>}
@@ -1458,6 +1475,7 @@ export default function App() {
   }, [playingItem, selected]);
 
   const visibleItems = demo ? demoItems : items;
+  const isMusicLibrary = activeView?.collectionType === 'music' || activeView?.name.toLowerCase() === 'music';
   const orderedViews = useMemo(() => orderLibraryViews(views, preferences.libraryOrder), [preferences.libraryOrder, views]);
   const visibleDrawerViews = orderedViews.filter((view) => !preferences.hiddenLibraryIds.includes(view.id));
   const sortedItems = useMemo(() => {
@@ -1473,9 +1491,9 @@ export default function App() {
       }
       return result;
     }
-    return result.sort((a, b) => compareTitles(a.title, b.title));
-  }, [randomNonce, sortMode, visibleItems]);
-  const availableLetters = useMemo(() => new Set(visibleItems.map((item) => titleInitial(item.title))), [visibleItems]);
+    return result.sort(isMusicLibrary ? compareArtistsThenTitles : (a, b) => compareTitles(a.title, b.title));
+  }, [isMusicLibrary, randomNonce, sortMode, visibleItems]);
+  const availableLetters = useMemo(() => new Set(visibleItems.map((item) => titleInitial(isMusicLibrary ? item.artist || item.title : item.title))), [isMusicLibrary, visibleItems]);
 
   function updatePreferences(patch: Partial<PrismPreferences>) {
     setPreferences((current) => ({ ...current, ...patch }));
@@ -1547,13 +1565,11 @@ export default function App() {
 
   const seasons = [...new Set(seriesEpisodes.map((episode) => episode.seasonNumber ?? 0))];
   const visibleEpisodes = seriesEpisodes.filter((episode) => (episode.seasonNumber ?? 0) === selectedSeason);
-  const isMusicLibrary = activeView?.collectionType === 'music' || activeView?.name.toLowerCase() === 'music';
-
   return (
     <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library library--grid-${preferences.gridDensity} ${isMusicLibrary ? 'library--music' : ''} ${preferences.reducedMotion ? 'library--reduced-motion' : ''} ${selected ? 'library--inspect' : ''}`}>
       <header {...windowDragProps()}>
         <div className="header__brand">
-          {!demo && <button className="menu-trigger" onClick={() => { setDrawerPage('libraries'); setMenuOpen(true); }} aria-label="Open library menu"><span /><span /><span /></button>}
+          {!demo && <button className="menu-trigger" onClick={() => { playUiTone('panel'); setDrawerPage('libraries'); setMenuOpen(true); }} aria-label="Open library menu"><span /><span /><span /></button>}
           <button className="wordmark" onClick={() => setSelected(null)}>PRISM</button>
         </div>
         <div className="header__tools" aria-label="Library navigation">
@@ -1574,7 +1590,7 @@ export default function App() {
               }}
               aria-label="Sort library"
             >
-              <option value="alphabetical">Alphabetical</option>
+              <option value="alphabetical">{isMusicLibrary ? 'Artist A–Z' : 'Alphabetical'}</option>
               <option value="random">Random</option>
               <option value="released">Date released</option>
             </select>
@@ -1795,7 +1811,7 @@ export default function App() {
             ) : (
               <div className="inspect__actions">
                 <div className="playback-actions">
-                  <button className="play" aria-label={`Play ${selected.title}`} onClick={() => setPlayingItem(selected)}><PrismPlayMark /><span className="play__label">PLAY</span></button>
+                  <button className="play" aria-label={`Play ${selected.title}`} onClick={() => { playUiTone('play'); setPlayingItem(selected); }}><PrismPlayMark /><span className="play__label">PLAY</span></button>
                   {playbackVersions.length > 1 && (
                     <label className="version-picker">
                       <span>VERSION</span>
