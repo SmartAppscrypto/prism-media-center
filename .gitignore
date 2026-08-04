@@ -8,3 +8,5 @@ release/
 server/config/
 server/cache/
 .repos/
+desktop/electron/native/build/
+desktop/vendor/vlc/

@@ -19,3 +19,15 @@ contextBridge.exposeInMainWorld('prismMetadata', {
     return () => ipcRenderer.removeListener('prism-production-progress', listener);
   }
 });
+
+contextBridge.exposeInMainWorld('prismNativePlayer', {
+  status: () => ipcRenderer.invoke('prism-native-status'),
+  start: (mediaUrl, subtitleStyle) => ipcRenderer.invoke('prism-native-start', mediaUrl, subtitleStyle),
+  state: () => ipcRenderer.invoke('prism-native-state'),
+  setPaused: (paused) => ipcRenderer.invoke('prism-native-pause', paused),
+  seek: (milliseconds) => ipcRenderer.invoke('prism-native-seek', milliseconds),
+  setVolume: (volume) => ipcRenderer.invoke('prism-native-volume', volume),
+  addSubtitle: (subtitleUrl) => ipcRenderer.invoke('prism-native-subtitle-add', subtitleUrl),
+  disableSubtitles: () => ipcRenderer.invoke('prism-native-subtitle-off'),
+  stop: () => ipcRenderer.invoke('prism-native-stop')
+});

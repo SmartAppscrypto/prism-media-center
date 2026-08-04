@@ -324,6 +324,9 @@ function Connect({ onConnected, onDemo }: { onConnected: (session: PrismSession)
 function Player({ item, session, preferences, mediaSourceId: preferredMediaSourceId, onClose }: { item: MediaItem; session: PrismSession; preferences: PrismPreferences; mediaSourceId?: string; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const idleTimerRef = useRef<number | undefined>(undefined);
+  const nativeModeRef = useRef(false);
+  const currentTimeRef = useRef(0);
+  const durationRef = useRef(0);
   const [paused, setPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -335,6 +338,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
   const [mediaSourceId, setMediaSourceId] = useState(item.id);
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
   const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
+  const [nativeMode, setNativeMode] = useState(false);
 
   const revealChrome = useCallback(() => {
     setChromeVisible(true);
@@ -346,13 +350,25 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
   }, []);
 
   const togglePlayback = useCallback(() => {
+    if (nativeModeRef.current) {
+      void window.prismNativePlayer?.setPaused(!paused);
+      setPaused(!paused);
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) void video.play();
     else video.pause();
-  }, []);
+  }, [paused]);
 
   const seekBy = useCallback((seconds: number) => {
+    if (nativeModeRef.current) {
+      const nextTime = Math.max(0, Math.min(durationRef.current || Infinity, currentTimeRef.current + seconds));
+      currentTimeRef.current = nextTime;
+      setCurrentTime(nextTime);
+      void window.prismNativePlayer?.seek(nextTime * 1000);
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + seconds));
@@ -400,7 +416,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
     };
     video.addEventListener('error', onVideoError);
 
-    getPlaybackDetails(item, session, preferredMediaSourceId).then((details) => {
+    getPlaybackDetails(item, session, preferredMediaSourceId).then(async (details) => {
       if (cancelled) return;
       activeDetails = details;
       setMediaSourceId(details.mediaSourceId);
@@ -411,6 +427,32 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
         ? (!audioIsEnglish ? english : details.subtitles.find((track) => track.isForced && ['eng', 'en'].includes(track.language?.toLowerCase() ?? '')))
         : undefined;
       setSelectedSubtitle(automaticTrack?.index ?? null);
+
+      const nativeStatus = await window.prismNativePlayer?.status().catch(() => ({ available: false }));
+      if (cancelled) return;
+      if (nativeStatus?.available && window.prismNativePlayer) {
+        nativeModeRef.current = true;
+        setNativeMode(true);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        if (cancelled) return;
+        const result = await window.prismNativePlayer.start(directPlaybackUrl(item, session, details), {
+          color: preferences.subtitleColor,
+          size: preferences.subtitleSize,
+          background: preferences.subtitleBackground
+        });
+        if (!result.ok) {
+          nativeModeRef.current = false;
+          setNativeMode(false);
+          setPaused(true);
+          setPlaybackError(result.error || 'The PRISM native player could not start this title.');
+          return;
+        }
+        setPaused(false);
+        if (automaticTrack) {
+          void window.prismNativePlayer.addSubtitle(subtitleUrl(item, session, details.mediaSourceId, automaticTrack.index));
+        } else void window.prismNativePlayer.disableSubtitles();
+        return;
+      }
 
       const mimeType = directPlayMimeType(details);
       if (mimeType && video.canPlayType(mimeType)) {
@@ -424,16 +466,49 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
 
     return () => {
       cancelled = true;
+      if (nativeModeRef.current) void window.prismNativePlayer?.stop();
+      nativeModeRef.current = false;
       video.removeEventListener('error', onVideoError);
       hls?.destroy();
     };
   }, [item, preferences.autoEnglishSubtitles, preferredMediaSourceId, session]);
 
   useEffect(() => {
+    if (nativeMode) {
+      if (selectedSubtitle === null) void window.prismNativePlayer?.disableSubtitles();
+      else void window.prismNativePlayer?.addSubtitle(subtitleUrl(item, session, mediaSourceId, selectedSubtitle));
+      return;
+    }
     Array.from(videoRef.current?.textTracks ?? []).forEach((track, index) => {
       track.mode = subtitleTracks[index]?.index === selectedSubtitle ? 'showing' : 'disabled';
     });
-  }, [selectedSubtitle, subtitleTracks]);
+  }, [item, mediaSourceId, nativeMode, selectedSubtitle, session, subtitleTracks]);
+
+  useEffect(() => {
+    if (!nativeMode || !window.prismNativePlayer) return;
+    let polling = false;
+    const poll = window.setInterval(async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const state = await window.prismNativePlayer!.state();
+        const nextTime = Math.max(0, state.timeMs / 1000);
+        const nextDuration = Math.max(0, state.durationMs / 1000);
+        currentTimeRef.current = nextTime;
+        durationRef.current = nextDuration;
+        setCurrentTime(nextTime);
+        setDuration(nextDuration);
+        setVolume(Math.min(1, Math.max(0, state.volume / 100)));
+        setMuted(state.volume === 0);
+        setPaused(state.paused || (!state.playing && !state.ended));
+        if (state.error) setPlaybackError(state.message || 'The PRISM native player could not decode this title.');
+        if (state.ended) onClose();
+      } finally {
+        polling = false;
+      }
+    }, 250);
+    return () => window.clearInterval(poll);
+  }, [nativeMode, onClose]);
 
   useEffect(() => {
     revealChrome();
@@ -456,6 +531,12 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
   }, [preferences.skipSeconds, revealChrome, seekBy, togglePlayback]);
 
   function updateVolume(nextVolume: number) {
+    if (nativeModeRef.current) {
+      void window.prismNativePlayer?.setVolume(nextVolume);
+      setVolume(nextVolume);
+      setMuted(nextVolume === 0);
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     video.volume = nextVolume;
@@ -466,7 +547,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
 
   return (
     <div
-      className={`player ${chromeVisible ? '' : 'player--idle'}`}
+      className={`player ${nativeMode ? 'player--native' : ''} ${chromeVisible ? '' : 'player--idle'}`}
       style={{
         '--subtitle-color': { white: '#ffffff', warm: '#fff2d2', yellow: '#ffe45c', cyan: '#a9f5ff' }[preferences.subtitleColor],
         '--subtitle-size': { small: '82%', medium: '100%', large: '126%' }[preferences.subtitleSize],
@@ -478,6 +559,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
     >
       <video
         ref={videoRef}
+        className={nativeMode ? 'player__html-video--hidden' : ''}
         autoPlay
         playsInline
         tabIndex={-1}
@@ -508,6 +590,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
           />
         ))}
       </video>
+      {nativeMode && <button className="player__native-click-target" onClick={togglePlayback} aria-label={paused ? 'Play' : 'Pause'} />}
       <button onClick={onClose} className="player__close player__chrome back-button" aria-label="Close player"><span aria-hidden="true">←</span><span>BACK</span></button>
       {playbackError && <p className="player__error" role="alert">{playbackError}</p>}
       <div className="player__controls player__chrome">
@@ -522,7 +605,9 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
           value={Math.min(currentTime, duration || 0)}
           onChange={(event) => {
             const nextTime = Number(event.target.value);
-            if (videoRef.current) videoRef.current.currentTime = nextTime;
+            currentTimeRef.current = nextTime;
+            if (nativeModeRef.current) void window.prismNativePlayer?.seek(nextTime * 1000);
+            else if (videoRef.current) videoRef.current.currentTime = nextTime;
             setCurrentTime(nextTime);
           }}
           aria-label="Playback position"
@@ -530,6 +615,12 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
         <span className="player__time">{formatClock(duration)}</span>
         <button
           onClick={() => {
+            if (nativeModeRef.current) {
+              const nextMuted = !muted;
+              void window.prismNativePlayer?.setVolume(nextMuted ? 0 : (volume || 1));
+              setMuted(nextMuted);
+              return;
+            }
             const video = videoRef.current;
             if (!video) return;
             video.muted = !video.muted;

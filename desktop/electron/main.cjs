@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 const { findShotOnWhatPage, slugify } = require('./shotonwhat.cjs');
 
@@ -11,6 +12,24 @@ const productionMissMaxAge = 30 * 24 * 60 * 60 * 1000;
 const productionLookups = new Map();
 let productionCache;
 let productionScanRunning = false;
+let nativePlayer;
+
+function nativePlayerPaths() {
+  const packagedRuntime = path.join(process.resourcesPath, 'vlc');
+  const developmentRuntime = '/Applications/VLC.app/Contents/MacOS';
+  const runtime = fsSync.existsSync(packagedRuntime) ? packagedRuntime : developmentRuntime;
+  return {
+    library: path.join(runtime, 'lib', 'libvlc.5.dylib'),
+    plugins: path.join(runtime, 'plugins')
+  };
+}
+
+function getNativePlayer() {
+  if (nativePlayer !== undefined) return nativePlayer;
+  try { nativePlayer = require('./native/build/Release/prism_vlc.node'); }
+  catch { nativePlayer = null; }
+  return nativePlayer;
+}
 
 function prismDataPath(filename) {
   return path.join(app.getPath('userData'), filename);
@@ -169,6 +188,54 @@ ipcMain.handle('prism-production-scan', async (event, rawItems) => {
   }
 });
 
+ipcMain.handle('prism-native-status', (event) => {
+  const bridge = getNativePlayer();
+  const runtime = nativePlayerPaths();
+  const window = BrowserWindow.fromWebContents(event.sender);
+  return {
+    available: Boolean(bridge && window && fsSync.existsSync(runtime.library) && fsSync.existsSync(runtime.plugins)),
+    surface: bridge && window ? bridge.inspectParent(window.getNativeWindowHandle()) : null
+  };
+});
+
+ipcMain.handle('prism-native-start', (event, mediaUrl, subtitleStyle) => {
+  const bridge = getNativePlayer();
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!bridge || !window || typeof mediaUrl !== 'string') return { ok: false, error: 'The native player is not available.' };
+  let parsed;
+  try { parsed = new URL(mediaUrl); }
+  catch { return { ok: false, error: 'The media address is invalid.' }; }
+  if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: 'The native player only accepts media server URLs.' };
+  const runtime = nativePlayerPaths();
+  const colors = { white: '16777215', warm: '16773842', yellow: '16770140', cyan: '11138559' };
+  const sizes = { small: '20', medium: '16', large: '12' };
+  const backgrounds = { none: '0', soft: '120', strong: '210' };
+  const error = bridge.start(
+    window.getNativeWindowHandle(),
+    runtime.library,
+    runtime.plugins,
+    parsed.toString(),
+    colors[subtitleStyle?.color] || colors.white,
+    sizes[subtitleStyle?.size] || sizes.medium,
+    backgrounds[subtitleStyle?.background] || backgrounds.soft
+  );
+  return error ? { ok: false, error } : { ok: true };
+});
+
+ipcMain.handle('prism-native-state', () => getNativePlayer()?.state() ?? { active: false, error: true, message: 'The native player is unavailable.' });
+ipcMain.handle('prism-native-pause', (_event, paused) => Boolean(getNativePlayer()?.setPaused(Boolean(paused))));
+ipcMain.handle('prism-native-seek', (_event, milliseconds) => Number.isFinite(milliseconds) && Boolean(getNativePlayer()?.setTime(Math.max(0, Math.round(milliseconds)))));
+ipcMain.handle('prism-native-volume', (_event, volume) => Number.isFinite(volume) && Boolean(getNativePlayer()?.setVolume(Math.round(Math.max(0, Math.min(1.25, volume)) * 100))));
+ipcMain.handle('prism-native-subtitle-add', (_event, subtitleUrl) => {
+  if (typeof subtitleUrl !== 'string') return false;
+  try {
+    const parsed = new URL(subtitleUrl);
+    return ['http:', 'https:'].includes(parsed.protocol) && Boolean(getNativePlayer()?.addSubtitle(parsed.toString()));
+  } catch { return false; }
+});
+ipcMain.handle('prism-native-subtitle-off', () => Boolean(getNativePlayer()?.disableSubtitles()));
+ipcMain.handle('prism-native-stop', () => { getNativePlayer()?.stop(); return true; });
+
 ipcMain.on('prism-window-drag-start', (event, point) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
@@ -193,7 +260,8 @@ function createWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 640,
-    backgroundColor: '#050506',
+    backgroundColor: '#00000000',
+    transparent: true,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
     webPreferences: {
@@ -215,6 +283,7 @@ function createWindow() {
   } else {
     window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+  window.on('closed', () => getNativePlayer()?.stop());
 }
 
 app.whenReady().then(() => {
