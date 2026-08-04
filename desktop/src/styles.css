@@ -69,6 +69,41 @@ button.poster:hover, button.poster:focus-visible { z-index: 2; transform: scale(
 .album-caption strong { overflow: hidden; font: 400 clamp(.9rem, 1.25vw, 1.25rem)/1.05 'Instrument Serif'; text-overflow: ellipsis; white-space: nowrap; }
 .album-caption small { overflow: hidden; color: rgb(255 255 255 / .48); font: .43rem 'Space Mono'; letter-spacing: .13em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .inspect__poster .poster--album { aspect-ratio: 1; }
+.inspect--album { overflow: hidden; grid-template-columns: minmax(310px, 32vw) 1fr; }
+.inspect--album::after { content: ''; position: absolute; inset: -10%; z-index: -1; opacity: .35; pointer-events: none; background-image: radial-gradient(circle, rgb(255 255 255 / .42) 0 1px, transparent 1.5px), radial-gradient(circle, hsl(var(--selected-hue) 90% 72% / .32) 0 1px, transparent 1.6px); background-position: 0 0, 33px 47px; background-size: 97px 83px, 137px 121px; animation: album-stars 28s linear infinite; mask-image: radial-gradient(circle at 28% 50%, #000, transparent 55%); }
+.inspect--album .inspect__poster { isolation: isolate; }
+.inspect--album .inspect__poster::before, .inspect--album .inspect__poster::after { content: ''; position: absolute; z-index: -1; top: 50%; left: 50%; width: 142%; aspect-ratio: 1; border: 1px solid rgb(255 255 255 / .09); border-radius: 50%; transform: translate(-50%, -50%); opacity: .72; }
+.inspect--album .inspect__poster::after { width: 188%; border-color: hsl(var(--selected-hue) 75% 70% / .08); }
+.inspect--album:has(.album-player--playing) .inspect__poster::before { animation: album-orbit 14s linear infinite; box-shadow: 0 0 60px hsl(var(--selected-hue) 75% 55% / .08); }
+.inspect--album:has(.album-player--playing) .inspect__poster::after { animation: album-orbit-reverse 23s linear infinite; }
+.inspect--album:has(.album-player--playing) .inspect__poster .poster { animation: album-breathe 5s ease-in-out infinite; }
+.inspect--album .inspect__copy { max-width: 850px; }
+.inspect--album .inspect__copy h2 { margin-block: 17px 20px; font-size: clamp(3.6rem, 6.8vw, 7.2rem); }
+.inspect--album .overview { max-width: 640px; margin-bottom: 25px; }
+.album-player { width: min(100%, 760px); display: grid; gap: 14px; }
+.album-player audio { display: none; }
+.album-player__transport { display: flex; align-items: center; gap: 11px; }
+.album-player__transport button { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid rgb(255 255 255 / .16); border-radius: 50%; background: transparent; cursor: pointer; color: rgb(255 255 255 / .52); transition: color .25s, border-color .25s, transform .25s, box-shadow .25s; }
+.album-player__transport button:hover:not(:disabled), .album-player__transport button:focus-visible { outline: none; color: #fff; border-color: rgb(255 255 255 / .65); transform: scale(1.08); }
+.album-player__transport button:disabled { opacity: .2; cursor: default; }
+.album-player__transport .album-player__toggle { width: 44px; height: 44px; color: #fff; border-color: rgb(255 255 255 / .68); font-size: .72rem; box-shadow: 0 0 0 5px rgb(255 255 255 / .025); }
+.album-player--playing .album-player__toggle { border-color: hsl(190 82% 78% / .9); box-shadow: 0 0 0 5px rgb(255 255 255 / .035), 0 0 28px hsl(190 78% 63% / .18); }
+.album-player__now { min-width: 0; display: grid; gap: 3px; margin-left: 9px; }
+.album-player__now small { color: rgb(255 255 255 / .34); font: .43rem 'Space Mono'; letter-spacing: .25em; }
+.album-player__now strong { overflow: hidden; color: rgb(255 255 255 / .74); font: 400 .72rem 'Space Mono'; letter-spacing: .12em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.album-player__timeline { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 10px; color: rgb(255 255 255 / .28); font: .46rem 'Space Mono'; }
+.album-player__timeline span:last-child { text-align: right; }
+.album-player__timeline input { width: 100%; height: 2px; accent-color: #fff; cursor: pointer; }
+.album-player__waveform { height: 44px; display: flex; align-items: center; gap: 3px; overflow: hidden; opacity: .26; transition: opacity .5s; }
+.album-player__waveform i { width: 2px; height: var(--bar); flex: 1 1 auto; max-width: 4px; min-height: 2px; transform: scaleY(.16); background: linear-gradient(to top, hsl(var(--selected-hue) 70% 65% / .4), rgb(255 255 255 / .9)); transform-origin: center; transition: transform .6s cubic-bezier(.2,.7,.2,1); }
+.album-player--playing .album-player__waveform { opacity: .75; }
+.album-player--playing .album-player__waveform i { animation: album-equalize .9s var(--delay) ease-in-out infinite alternate; }
+.album-player__status { margin: 0; color: rgb(255 255 255 / .35); font: .5rem 'Space Mono'; letter-spacing: .12em; }
+.album-track-list { max-height: 168px; overflow: auto; padding-right: 8px; scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / .16) transparent; }
+.album-track-list button { width: 100%; min-height: 35px; display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-top: 1px solid rgb(255 255 255 / .055); background: transparent; cursor: pointer; color: rgb(255 255 255 / .34); text-align: left; transition: color .2s, background .2s; }
+.album-track-list button:hover, .album-track-list button:focus-visible, .album-track-list button.is-active { outline: none; color: #fff; background: linear-gradient(90deg, rgb(255 255 255 / .055), transparent); }
+.album-track-list span, .album-track-list small { font: .44rem 'Space Mono'; letter-spacing: .09em; }
+.album-track-list strong { overflow: hidden; font-size: .72rem; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 
 .inspect { position: fixed; z-index: 30; inset: 0; display: grid; grid-template-columns: minmax(300px, 29vw) 1fr; align-items: center; gap: 7vw; padding: 6vh 8vw; background: radial-gradient(circle at 28% 50%, hsl(var(--selected-hue, 195) 70% 32% / .35), transparent 38%); }
 .inspect::before { content: ''; position: absolute; inset: 0; z-index: -1; background-image: linear-gradient(90deg, rgb(5 5 6 / .7), rgb(5 5 6 / .92)), var(--backdrop, none); background-size: cover; background-position: center; }
@@ -304,6 +339,11 @@ html:has(.player--native), body:has(.player--native), #root:has(.player--native)
 @keyframes prism-float { from { transform: rotate(-3.5deg) scale(.95); } to { transform: rotate(3deg) scale(1); } }
 @keyframes prism-spectrum { to { transform: rotate(360deg); } }
 @keyframes prism-glint { 0%, 18% { transform: translateX(0) rotate(18deg); opacity: 0; } 35% { opacity: 1; } 68%, 100% { transform: translateX(440%) rotate(18deg); opacity: 0; } }
+@keyframes album-orbit { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes album-orbit-reverse { to { transform: translate(-50%, -50%) rotate(-360deg); } }
+@keyframes album-breathe { 0%, 100% { transform: translateY(0) scale(1); box-shadow: 0 50px 120px rgb(0 0 0 / .75); } 50% { transform: translateY(-7px) scale(1.012); box-shadow: 0 62px 145px rgb(0 0 0 / .82), 0 0 42px hsl(var(--selected-hue) 70% 55% / .14); } }
+@keyframes album-equalize { from { transform: scaleY(.18); } to { transform: scaleY(1); } }
+@keyframes album-stars { to { transform: translate3d(97px, 83px, 0); } }
 @media (max-width: 1100px) { .library--grid-cinematic .wall { grid-template-columns: repeat(4, minmax(145px, 1fr)); } .library--grid-comfortable .wall { grid-template-columns: repeat(5, minmax(130px, 1fr)); } .library--grid-compact .wall { grid-template-columns: repeat(6, minmax(110px, 1fr)); } .library--music.library--grid-cinematic .wall { grid-template-columns: repeat(4, minmax(150px, 1fr)); } .library--music.library--grid-comfortable .wall { grid-template-columns: repeat(5, minmax(130px, 1fr)); } .library--music.library--grid-compact .wall { grid-template-columns: repeat(6, minmax(110px, 1fr)); } .inspect:not(.inspect--more) { gap: 5vw; padding-inline: 5vw; } .crew-list { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 720px) { .more-page__hero, .more-page__body, .more-page__status { padding-inline: 28px; } .more-page__hero .reshelve { left: 28px; } .financial-grid, .crew-list, .production-spec-list { grid-template-columns: 1fr; } .inspect__actions { align-items: flex-start; flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes, searchRemoteSubtitles } from './jellyfin';
+import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes, searchRemoteSubtitles } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -101,6 +101,26 @@ describe('playback selection', () => {
     expect(albums[0]).toMatchObject({ title: 'Kind of Blue', artist: 'Miles Davis', type: 'MusicAlbum', year: 1959 });
     const requestUrl = String(vi.mocked(fetch).mock.calls[0][0]);
     expect(new URL(requestUrl).searchParams.get('IncludeItemTypes')).toBe('MusicAlbum');
+  });
+
+  it('loads album tracks in disc and track order for direct audio playback', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ Items: [{
+        Id: 'track-1',
+        Name: 'So What',
+        Type: 'Audio',
+        AlbumArtist: 'Miles Davis',
+        ParentIndexNumber: 1,
+        IndexNumber: 1,
+        RunTimeTicks: 5400000000
+      }] })
+    }));
+    const session = { serverUrl: 'http://server/', accessToken: 'a token', userId: 'user', username: 'name' } as PrismSession;
+    const tracks = await getAlbumTracks({ id: 'album', title: 'Kind of Blue', type: 'MusicAlbum', hue: 195 }, session);
+
+    expect(tracks[0]).toMatchObject({ title: 'So What', artist: 'Miles Davis', trackNumber: 1, discNumber: 1, runtimeMinutes: 9 });
+    expect(audioPlaybackUrl(tracks[0], session)).toBe('http://server/Audio/track-1/stream?Static=true&api_key=a%20token');
   });
 
   it('returns provider ids used for private TMDb enrichment', async () => {

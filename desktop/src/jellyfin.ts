@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.13.1"`
+    `Version="0.13.2"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -153,8 +153,15 @@ function mapMediaItem(item: Record<string, unknown>, session: PrismSession, inde
   return {
     id,
     title: String(item.Name ?? 'Untitled'),
+    artist: typeof item.AlbumArtist === 'string' && item.AlbumArtist.trim()
+      ? item.AlbumArtist
+      : Array.isArray(item.Artists) && item.Artists.length
+        ? item.Artists.map(String).join(', ')
+        : undefined,
     year: typeof item.ProductionYear === 'number' ? item.ProductionYear : undefined,
     releaseDate: typeof item.PremiereDate === 'string' ? item.PremiereDate : undefined,
+    trackNumber: typeof item.IndexNumber === 'number' ? item.IndexNumber : undefined,
+    discNumber: typeof item.ParentIndexNumber === 'number' ? item.ParentIndexNumber : undefined,
     runtimeMinutes: typeof item.RunTimeTicks === 'number' ? Math.round(item.RunTimeTicks / 600_000_000) : undefined,
     overview: typeof item.Overview === 'string' ? item.Overview : undefined,
     type: (item.Type as MediaItem['type']) ?? 'Movie',
@@ -164,6 +171,29 @@ function mapMediaItem(item: Record<string, unknown>, session: PrismSession, inde
       ? `${session.serverUrl}/Items/${id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
       : undefined
   };
+}
+
+export async function getAlbumTracks(album: MediaItem, session: PrismSession): Promise<MediaItem[]> {
+  const params = new URLSearchParams({
+    userId: session.userId,
+    ParentId: album.id,
+    Recursive: 'true',
+    IncludeItemTypes: 'Audio',
+    Fields: 'AlbumArtist,Artists,IndexNumber,ParentIndexNumber,RunTimeTicks',
+    SortBy: 'ParentIndexNumber,IndexNumber,SortName',
+    SortOrder: 'Ascending'
+  });
+  const result = await api<{ Items: Array<Record<string, unknown>> }>(
+    session.serverUrl,
+    `/Users/${session.userId}/Items?${params}`,
+    {},
+    session.accessToken
+  );
+  return result.Items.map((track, index) => mapMediaItem(track, session, index));
+}
+
+export function audioPlaybackUrl(track: MediaItem, session: PrismSession) {
+  return `${normalizedUrl(session.serverUrl)}/Audio/${encodeURIComponent(track.id)}/stream?Static=true&api_key=${encodeURIComponent(session.accessToken)}`;
 }
 
 export async function getItemDetails(item: MediaItem, session: PrismSession): Promise<MediaDetails> {

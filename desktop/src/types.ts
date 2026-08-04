@@ -12,6 +12,8 @@ export type MediaItem = {
   artist?: string;
   year?: number;
   releaseDate?: string;
+  trackNumber?: number;
+  discNumber?: number;
   seasonNumber?: number;
   episodeNumber?: number;
   runtimeMinutes?: number;

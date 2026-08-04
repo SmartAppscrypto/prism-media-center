@@ -1,7 +1,7 @@
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
 import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack } from './types';
 import { compareTitles, titleInitial } from './sorting';
@@ -146,6 +146,109 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
     <button className={className} data-letter={titleInitial(item.title)} style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}${item.artist ? ` by ${item.artist}` : ''}`}>{artwork}</button>
   ) : (
     <div className={className} style={style} aria-label={`${item.title} ${isAlbum ? 'album cover' : 'poster'}`}>{artwork}</div>
+  );
+}
+
+function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSession }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const autoplayRef = useRef(false);
+  const [tracks, setTracks] = useState<MediaItem[]>([]);
+  const [trackIndex, setTrackIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [status, setStatus] = useState('DEVELOPING TRACK LIST…');
+  const currentTrack = tracks[trackIndex];
+
+  useEffect(() => {
+    let cancelled = false;
+    setTracks([]);
+    setTrackIndex(0);
+    setStatus('DEVELOPING TRACK LIST…');
+    getAlbumTracks(album, session).then((nextTracks) => {
+      if (cancelled) return;
+      setTracks(nextTracks);
+      setStatus(nextTracks.length ? '' : 'NO TRACKS FOUND');
+    }).catch(() => {
+      if (!cancelled) setStatus('PRISM COULD NOT LOAD THIS ALBUM');
+    });
+    return () => { cancelled = true; };
+  }, [album, session]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !currentTrack) return;
+    setCurrentTime(0);
+    setDuration(0);
+    audio.load();
+    if (autoplayRef.current) void audio.play().catch(() => setStatus('PLAYBACK COULD NOT START'));
+  }, [currentTrack]);
+
+  async function togglePlayback() {
+    const audio = audioRef.current;
+    if (!audio || !currentTrack) return;
+    if (audio.paused) {
+      autoplayRef.current = true;
+      await audio.play().catch(() => setStatus('PLAYBACK COULD NOT START'));
+    } else audio.pause();
+  }
+
+  function chooseTrack(index: number) {
+    autoplayRef.current = true;
+    if (index === trackIndex) void audioRef.current?.play();
+    else setTrackIndex(index);
+  }
+
+  function moveTrack(direction: -1 | 1) {
+    if (!tracks.length) return;
+    autoplayRef.current = true;
+    setTrackIndex((trackIndex + direction + tracks.length) % tracks.length);
+  }
+
+  return (
+    <section className={`album-player ${playing ? 'album-player--playing' : ''}`} aria-label="Album player">
+      {currentTrack && <audio
+        ref={audioRef}
+        src={audioPlaybackUrl(currentTrack, session)}
+        preload="metadata"
+        onPlay={() => { setPlaying(true); setStatus(''); }}
+        onPause={() => setPlaying(false)}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+        onEnded={() => moveTrack(1)}
+        onError={() => setStatus('THIS TRACK COULD NOT BE PLAYED')}
+      />}
+      <div className="album-player__transport">
+        <button className="album-player__previous" onClick={() => moveTrack(-1)} disabled={!tracks.length} aria-label="Previous track">‹</button>
+        <button className="album-player__toggle" onClick={() => void togglePlayback()} disabled={!currentTrack} aria-label={playing ? 'Pause' : 'Play'}>{playing ? 'Ⅱ' : '▶'}</button>
+        <button className="album-player__next" onClick={() => moveTrack(1)} disabled={!tracks.length} aria-label="Next track">›</button>
+        <span className="album-player__now"><small>{playing ? 'NOW PLAYING' : 'READY'}</small><strong>{currentTrack?.title || album.title}</strong></span>
+      </div>
+      <div className="album-player__timeline">
+        <span>{formatClock(currentTime)}</span>
+        <input type="range" min="0" max={duration || 0} step="0.1" value={Math.min(currentTime, duration || 0)} onChange={(event) => {
+          const nextTime = Number(event.target.value);
+          if (audioRef.current) audioRef.current.currentTime = nextTime;
+          setCurrentTime(nextTime);
+        }} aria-label="Track position" />
+        <span>{formatClock(duration)}</span>
+      </div>
+      <div className="album-player__waveform" aria-hidden="true">
+        {Array.from({ length: 64 }, (_, index) => <i key={index} style={{ '--bar': `${22 + ((index * 37) % 76)}%`, '--delay': `${(index % 13) * -0.07}s` } as React.CSSProperties} />)}
+      </div>
+      {status && <p className="album-player__status">{status}</p>}
+      {tracks.length > 0 && (
+        <div className="album-track-list" aria-label="Tracks">
+          {tracks.map((track, index) => (
+            <button key={track.id} className={index === trackIndex ? 'is-active' : ''} onClick={() => chooseTrack(index)}>
+              <span>{String(track.trackNumber ?? index + 1).padStart(2, '0')}</span>
+              <strong>{track.title}</strong>
+              <small>{formatRuntime(track.runtimeMinutes)}</small>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1214,7 +1317,7 @@ export default function App() {
       </section>
 
       {selected && (
-        <section className={`inspect ${moreOpen ? 'inspect--more' : ''}`} style={{
+        <section className={`inspect ${moreOpen ? 'inspect--more' : ''} ${selected.type === 'MusicAlbum' || selected.type === 'Audio' ? 'inspect--album' : ''}`} style={{
           '--selected-hue': selected.hue,
           ...(selected.backdropUrl ? { '--backdrop': `url("${selected.backdropUrl}")` } : {})
         } as React.CSSProperties}>
@@ -1235,7 +1338,7 @@ export default function App() {
             <div className="inspect__poster"><Poster item={selected} /></div>
             <article className="inspect__copy">
             <button className="reshelve back-button" aria-label="Reshelve title" onClick={() => setSelected(null)}><span aria-hidden="true">←</span><span>RESHELVE</span></button>
-            <p className="eyebrow">{[selected.year, formatRuntime(selected.runtimeMinutes), selected.type.toUpperCase()].filter(Boolean).join(' · ')}</p>
+            <p className="eyebrow">{[selected.artist, selected.year, formatRuntime(selected.runtimeMinutes), selected.type.toUpperCase()].filter(Boolean).join(' · ')}</p>
             <h2>{selected.title}</h2>
             <p className="overview">{selected.overview || 'No synopsis is available for this title yet.'}</p>
             {demo ? (
@@ -1270,7 +1373,7 @@ export default function App() {
                 )}
               </div>
             ) : selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
-              <button className="play play--disabled" disabled><span className="play__fallback">♫</span><span className="play__label">MUSIC PLAYBACK NEXT</span></button>
+              session ? <AlbumPlayer album={selected} session={session} /> : null
             ) : (
               <div className="inspect__actions">
                 <div className="playback-actions">
