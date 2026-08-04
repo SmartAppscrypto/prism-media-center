@@ -233,6 +233,7 @@ ipcMain.handle('prism-native-subtitle-add', (_event, subtitleUrl) => {
     return ['http:', 'https:'].includes(parsed.protocol) && Boolean(getNativePlayer()?.addSubtitle(parsed.toString()));
   } catch { return false; }
 });
+ipcMain.handle('prism-native-subtitle-select', (_event, track) => Number.isInteger(track) && track >= 0 && Boolean(getNativePlayer()?.selectSubtitle(track)));
 ipcMain.handle('prism-native-subtitle-off', () => Boolean(getNativePlayer()?.disableSubtitles()));
 ipcMain.handle('prism-native-stop', () => { getNativePlayer()?.stop(); return true; });
 

@@ -21,11 +21,12 @@ declare global {
     prismNativePlayer?: {
       status: () => Promise<{ available: boolean; error?: string; surface?: { className: string; subviewCount: number } | null }>;
       start: (mediaUrl: string, subtitleStyle: { color: string; size: string; background: string }) => Promise<{ ok: boolean; error?: string }>;
-      state: () => Promise<{ active: boolean; playing: boolean; paused: boolean; ended: boolean; error: boolean; timeMs: number; durationMs: number; volume: number; message: string }>;
+      state: () => Promise<{ active: boolean; playing: boolean; paused: boolean; ended: boolean; error: boolean; timeMs: number; durationMs: number; volume: number; subtitleTrack: number; message: string }>;
       setPaused: (paused: boolean) => Promise<boolean>;
       seek: (milliseconds: number) => Promise<boolean>;
       setVolume: (volume: number) => Promise<boolean>;
       addSubtitle: (subtitleUrl: string) => Promise<boolean>;
+      selectSubtitle: (track: number) => Promise<boolean>;
       disableSubtitles: () => Promise<boolean>;
       stop: () => Promise<boolean>;
     };

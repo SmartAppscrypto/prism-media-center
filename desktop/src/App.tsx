@@ -4,6 +4,7 @@ import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
 import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, SubtitleTrack } from './types';
+import { compareTitles, titleInitial } from './sorting';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -119,11 +120,6 @@ function formatCodec(value?: string) {
   if (!value) return '—';
   const names: Record<string, string> = { h264: 'H.264', hevc: 'HEVC', h265: 'HEVC', eac3: 'E-AC-3', ac3: 'AC-3', aac: 'AAC', av1: 'AV1', vp9: 'VP9' };
   return names[value.toLowerCase()] ?? value.toUpperCase();
-}
-
-function titleInitial(title: string) {
-  const initial = title.trim().charAt(0).toUpperCase();
-  return /^[A-Z]$/.test(initial) ? initial : '#';
 }
 
 function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaItem) => void }) {
@@ -339,6 +335,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
   const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
   const [nativeMode, setNativeMode] = useState(false);
+  const [nativeReady, setNativeReady] = useState(false);
 
   const revealChrome = useCallback(() => {
     setChromeVisible(true);
@@ -448,9 +445,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
           return;
         }
         setPaused(false);
-        if (automaticTrack) {
-          void window.prismNativePlayer.addSubtitle(subtitleUrl(item, session, details.mediaSourceId, automaticTrack.index));
-        } else void window.prismNativePlayer.disableSubtitles();
+        setNativeReady(true);
         return;
       }
 
@@ -468,6 +463,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
       cancelled = true;
       if (nativeModeRef.current) void window.prismNativePlayer?.stop();
       nativeModeRef.current = false;
+      setNativeReady(false);
       video.removeEventListener('error', onVideoError);
       hls?.destroy();
     };
@@ -475,14 +471,15 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
 
   useEffect(() => {
     if (nativeMode) {
+      if (!nativeReady) return;
       if (selectedSubtitle === null) void window.prismNativePlayer?.disableSubtitles();
-      else void window.prismNativePlayer?.addSubtitle(subtitleUrl(item, session, mediaSourceId, selectedSubtitle));
+      else void window.prismNativePlayer?.selectSubtitle(selectedSubtitle);
       return;
     }
     Array.from(videoRef.current?.textTracks ?? []).forEach((track, index) => {
       track.mode = subtitleTracks[index]?.index === selectedSubtitle ? 'showing' : 'disabled';
     });
-  }, [item, mediaSourceId, nativeMode, selectedSubtitle, session, subtitleTracks]);
+  }, [item, mediaSourceId, nativeMode, nativeReady, selectedSubtitle, session, subtitleTracks]);
 
   useEffect(() => {
     if (!nativeMode || !window.prismNativePlayer) return;
@@ -703,11 +700,29 @@ export default function App() {
   const [seriesError, setSeriesError] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>(preferences.defaultSort);
   const [randomNonce, setRandomNonce] = useState(0);
+  const [scrollbarVisible, setScrollbarVisible] = useState(false);
   const wallRef = useRef<HTMLElement>(null);
+  const scrollbarTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     localStorage.setItem(preferencesKey, JSON.stringify(preferences));
   }, [preferences]);
+
+  useEffect(() => {
+    function onPointerMove(event: PointerEvent) {
+      window.clearTimeout(scrollbarTimerRef.current);
+      if (window.innerWidth - event.clientX <= 72) {
+        setScrollbarVisible(true);
+      } else {
+        scrollbarTimerRef.current = window.setTimeout(() => setScrollbarVisible(false), 450);
+      }
+    }
+    window.addEventListener('pointermove', onPointerMove);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.clearTimeout(scrollbarTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!menuOpen || drawerPage !== 'settings') return;
@@ -861,7 +876,7 @@ export default function App() {
     const result = [...visibleItems];
     if (sortMode === 'released') {
       const released = (item: MediaItem) => item.releaseDate ? Date.parse(item.releaseDate) : (item.year ?? 0) * 31_536_000_000;
-      return result.sort((a, b) => released(b) - released(a) || a.title.localeCompare(b.title));
+      return result.sort((a, b) => released(b) - released(a) || compareTitles(a.title, b.title));
     }
     if (sortMode === 'random') {
       for (let index = result.length - 1; index > 0; index -= 1) {
@@ -870,7 +885,7 @@ export default function App() {
       }
       return result;
     }
-    return result.sort((a, b) => a.title.localeCompare(b.title));
+    return result.sort((a, b) => compareTitles(a.title, b.title));
   }, [randomNonce, sortMode, visibleItems]);
   const availableLetters = useMemo(() => new Set(visibleItems.map((item) => titleInitial(item.title))), [visibleItems]);
 
@@ -1082,7 +1097,7 @@ export default function App() {
       {libraryError && <div className="library-error">{libraryError} <button onClick={disconnect}>Reconnect</button></div>}
       {!libraryError && (libraryLoading || !visibleItems.length) && <div className="loading">DEVELOPING {activeView?.name?.toUpperCase() || 'YOUR LIBRARY'}…</div>}
 
-      <section ref={wallRef} className="wall" aria-label="Media library" onKeyDown={navigatePosterGrid}>
+      <section ref={wallRef} className={`wall ${scrollbarVisible ? 'wall--scrollbar-visible' : ''}`} aria-label="Media library" onKeyDown={navigatePosterGrid}>
         {sortedItems.map((item) => <Poster key={item.id} item={item} onSelect={setSelected} />)}
       </section>
 

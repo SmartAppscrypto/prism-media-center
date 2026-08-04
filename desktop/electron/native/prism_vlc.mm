@@ -29,6 +29,7 @@ struct VlcApi {
   decltype(&libvlc_media_player_set_time) setTime = nullptr;
   decltype(&libvlc_media_player_get_length) getLength = nullptr;
   decltype(&libvlc_media_player_add_slave) addSlave = nullptr;
+  decltype(&libvlc_video_get_spu) getSubtitleTrack = nullptr;
   decltype(&libvlc_video_set_spu) setSubtitleTrack = nullptr;
   decltype(&libvlc_audio_get_volume) getVolume = nullptr;
   decltype(&libvlc_audio_set_volume) setVolume = nullptr;
@@ -40,6 +41,7 @@ libvlc_media_player_t* player = nullptr;
 NSView* videoView = nil;
 NSView* parentView = nil;
 std::string lastError;
+uint64_t subtitleCommandGeneration = 0;
 
 #define LOAD_VLC(symbol, field) \
   api.field = reinterpret_cast<decltype(api.field)>(dlsym(api.library, symbol)); \
@@ -124,6 +126,7 @@ bool loadRuntime(const std::string& libraryPath, const std::string& pluginPath, 
   LOAD_VLC("libvlc_media_player_set_time", setTime);
   LOAD_VLC("libvlc_media_player_get_length", getLength);
   LOAD_VLC("libvlc_media_player_add_slave", addSlave);
+  LOAD_VLC("libvlc_video_get_spu", getSubtitleTrack);
   LOAD_VLC("libvlc_video_set_spu", setSubtitleTrack);
   LOAD_VLC("libvlc_audio_get_volume", getVolume);
   LOAD_VLC("libvlc_audio_set_volume", setVolume);
@@ -177,6 +180,26 @@ void hideVideoView() {
   if (NSThread.isMainThread) hide(); else dispatch_sync(dispatch_get_main_queue(), hide);
 }
 
+void enforceSubtitlesOff() {
+  const uint64_t generation = ++subtitleCommandGeneration;
+  const int delays[] = {0, 250, 700, 1400};
+  for (const int delay : delays) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(delay) * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+      if (player && generation == subtitleCommandGeneration) api.setSubtitleTrack(player, -1);
+    });
+  }
+}
+
+void selectSubtitleTrack(int track) {
+  const uint64_t generation = ++subtitleCommandGeneration;
+  const int delays[] = {0, 250, 700, 1400};
+  for (const int delay : delays) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(delay) * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+      if (player && generation == subtitleCommandGeneration) api.setSubtitleTrack(player, track);
+    });
+  }
+}
+
 napi_value start(napi_env env, napi_callback_info info) {
   size_t argc = 7;
   napi_value argv[7];
@@ -198,10 +221,12 @@ napi_value start(napi_env env, napi_callback_info info) {
   if (!media) return jsString(env, "libVLC could not open this media URL.");
   api.addOption(media, ":http-reconnect");
   api.addOption(media, ":input-repeat=0");
+  api.addOption(media, ":sub-track=-1");
   api.setMedia(player, media);
   api.releaseMedia(media);
   api.setNSObject(player, (__bridge void*)videoView);
   if (api.play(player) != 0) return jsString(env, "libVLC could not start playback.");
+  enforceSubtitlesOff();
   lastError.clear();
   napi_value nullValue;
   napi_get_null(env, &nullValue);
@@ -221,6 +246,7 @@ napi_value runtimeCheck(napi_env env, napi_callback_info info) {
 }
 
 napi_value stop(napi_env env, napi_callback_info) {
+  ++subtitleCommandGeneration;
   if (player) api.stop(player);
   hideVideoView();
   napi_value undefined;
@@ -263,12 +289,33 @@ napi_value addSubtitle(napi_env env, napi_callback_info info) {
   napi_value argv[1];
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
   if (!player || !argc) return jsBoolean(env, false);
+  ++subtitleCommandGeneration;
   const std::string url = stringArg(env, argv[0]);
-  return jsBoolean(env, api.addSlave(player, libvlc_media_slave_type_subtitle, url.c_str(), true) == 0);
+  const libvlc_state_t previousState = api.getState(player);
+  const libvlc_time_t previousTime = api.getTime(player);
+  const bool wasPlaying = previousState == libvlc_Playing || previousState == libvlc_Opening || previousState == libvlc_Buffering;
+  const bool added = api.addSlave(player, libvlc_media_slave_type_subtitle, url.c_str(), true) == 0;
+  if (added && wasPlaying) {
+    api.play(player);
+    if (previousTime > 0) api.setTime(player, previousTime);
+  }
+  return jsBoolean(env, added);
 }
 
 napi_value disableSubtitles(napi_env env, napi_callback_info) {
-  return jsBoolean(env, player && api.setSubtitleTrack(player, -1) == 0);
+  if (!player) return jsBoolean(env, false);
+  enforceSubtitlesOff();
+  return jsBoolean(env, true);
+}
+
+napi_value selectSubtitle(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  int32_t track = -1;
+  if (!player || !argc || napi_get_value_int32(env, argv[0], &track) != napi_ok || track < 0) return jsBoolean(env, false);
+  selectSubtitleTrack(track);
+  return jsBoolean(env, true);
 }
 
 napi_value state(napi_env env, napi_callback_info) {
@@ -283,6 +330,7 @@ napi_value state(napi_env env, napi_callback_info) {
   setNamedNumber(env, result, "timeMs", player ? static_cast<double>(api.getTime(player)) : 0);
   setNamedNumber(env, result, "durationMs", player ? static_cast<double>(api.getLength(player)) : 0);
   setNamedNumber(env, result, "volume", player ? static_cast<double>(api.getVolume(player)) : 100);
+  setNamedNumber(env, result, "subtitleTrack", player ? static_cast<double>(api.getSubtitleTrack(player)) : -1);
   setNamedString(env, result, "message", current == libvlc_Error ? "The native player could not decode this title." : lastError);
   return result;
 }
@@ -319,6 +367,7 @@ napi_value initialize(napi_env env, napi_value exports) {
     {"setTime", nullptr, setTime, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"setVolume", nullptr, setVolume, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"addSubtitle", nullptr, addSubtitle, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"selectSubtitle", nullptr, selectSubtitle, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"disableSubtitles", nullptr, disableSubtitles, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"state", nullptr, state, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"inspectParent", nullptr, inspectParent, nullptr, nullptr, nullptr, napi_default, nullptr}
