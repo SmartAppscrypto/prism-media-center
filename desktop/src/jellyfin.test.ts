@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes, searchRemoteSubtitles } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -105,5 +105,44 @@ describe('playback selection', () => {
 
     const episodes = await getSeriesEpisodes({ id: 'fallout-s1', seriesIds: ['fallout-s1', 'fallout-s2'], title: 'Fallout', type: 'Series', hue: 195 }, { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' });
     expect(episodes.map((episode) => [episode.seasonNumber, episode.episodeNumber])).toEqual([[1, 1], [2, 1], [2, 2]]);
+  });
+
+  it('identifies forced and hash-matched remote subtitles', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{
+        Id: 'provider-result',
+        Name: 'English foreign parts only',
+        ProviderName: 'Open Subtitles',
+        Format: 'srt',
+        Forced: true,
+        IsHashMatch: true,
+        DownloadCount: 42
+      }]
+    }));
+
+    const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' } as PrismSession;
+    await expect(searchRemoteSubtitles({ id: 'item' } as MediaItem, session)).resolves.toEqual([{
+      id: 'provider-result',
+      name: 'English foreign parts only',
+      provider: 'Open Subtitles',
+      format: 'srt',
+      forced: true,
+      hashMatch: true,
+      downloads: 42
+    }]);
+  });
+
+  it('downloads a selected remote subtitle without restarting playback itself', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const session = { serverUrl: 'http://server/', accessToken: 'token', userId: 'user', username: 'name' } as PrismSession;
+
+    await downloadRemoteSubtitle({ id: 'item' } as MediaItem, session, 'provider/result');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://server/Items/item/RemoteSearch/Subtitles/provider%2Fresult',
+      expect.objectContaining({ method: 'POST' })
+    );
   });
 });

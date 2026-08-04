@@ -245,6 +245,9 @@ button.poster:hover, button.poster:focus-visible { z-index: 2; transform: scale(
 .player--native .player__html-video--hidden { visibility: hidden; }
 .player__native-click-target { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; outline: none; background: transparent; cursor: pointer; }
 html:has(.player--native), body:has(.player--native), #root:has(.player--native) { background: transparent; }
+.player__subtitle-layer { position: absolute; z-index: 4; left: 7%; right: 7%; bottom: 8.5%; display: grid; justify-items: center; gap: 5px; pointer-events: none; color: var(--subtitle-color, #fff); font: 600 var(--subtitle-size, clamp(1.25rem, 2.15vw, 2.15rem))/1.28 'Familjen Grotesk', sans-serif; text-align: center; text-shadow: 0 2px 5px #000, 0 0 3px #000, 0 0 14px rgb(0 0 0 / .75); transition: bottom .4s ease; }
+.player:not(.player--idle) .player__subtitle-layer { bottom: 15%; }
+.player__subtitle-layer span { width: fit-content; max-width: min(92%, 1300px); padding: .08em .28em .13em; white-space: pre-line; background: var(--subtitle-background, rgb(0 0 0 / .48)); border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .player video::cue { color: var(--subtitle-color, #fff); font-size: var(--subtitle-size, 100%); background-color: var(--subtitle-background, rgb(0 0 0 / .48)); text-shadow: 0 2px 5px #000, 0 0 2px #000; }
 .player video:focus, .player video:focus-visible { outline: none !important; box-shadow: none !important; }
 .player__close { position: absolute; z-index: 60; top: 32px; left: 36px; min-width: 112px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 12px 18px; border: 1px solid rgb(255 255 255 / .3); background: rgb(0 0 0 / .55); backdrop-filter: blur(10px); cursor: pointer; pointer-events: auto; app-region: no-drag; -webkit-app-region: no-drag; font: .68rem 'Space Mono'; letter-spacing: .28em; }
@@ -264,12 +267,26 @@ html:has(.player--native), body:has(.player--native), #root:has(.player--native)
 .subtitle-control { position: relative; flex: 0 0 auto; }
 .subtitle-control > button { border: 1px solid rgb(255 255 255 / .26); border-radius: 4px; color: rgb(255 255 255 / .65); }
 .subtitle-control > button.subtitle-control__active { border-color: #fff; color: #fff; box-shadow: 0 0 20px hsl(196 90% 60% / .18); }
-.subtitle-menu { position: absolute; right: 0; bottom: calc(100% + 18px); width: 250px; max-height: 310px; padding: 12px; overflow: auto; border: 1px solid rgb(255 255 255 / .16); background: linear-gradient(145deg, rgb(20 23 27 / .96), rgb(3 4 6 / .94)); box-shadow: 0 22px 70px rgb(0 0 0 / .7); backdrop-filter: blur(28px); }
-.subtitle-menu p { margin: 6px 8px 10px; color: rgb(255 255 255 / .4); font: .55rem 'Space Mono'; letter-spacing: .28em; }
+.subtitle-menu { position: absolute; right: 0; bottom: calc(100% + 18px); width: 330px; max-height: min(68vh, 590px); padding: 14px; overflow: auto; border: 1px solid rgb(255 255 255 / .16); background: linear-gradient(145deg, rgb(20 23 27 / .97), rgb(3 4 6 / .96)); box-shadow: 0 22px 70px rgb(0 0 0 / .7); backdrop-filter: blur(28px); scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / .2) transparent; }
+.subtitle-menu p { margin: 14px 8px 10px; color: rgb(255 255 255 / .4); font: .55rem 'Space Mono'; letter-spacing: .28em; }
+.subtitle-menu p:first-child { margin-top: 6px; }
 .subtitle-menu button { width: 100%; display: block; padding: 11px 10px; color: rgb(255 255 255 / .58); text-align: left; letter-spacing: .04em; border-top: 1px solid rgb(255 255 255 / .07); }
 .subtitle-menu button:hover, .subtitle-menu button.is-selected { color: #fff; background: rgb(255 255 255 / .06); }
-.subtitle-menu button.is-selected::after { content: '✓'; float: right; }
+.subtitle-menu .subtitle-track-option.is-selected::after { content: '✓'; float: right; }
 .subtitle-menu span { display: block; padding: 12px 10px; color: rgb(255 255 255 / .35); font: .65rem 'Space Mono'; }
+.subtitle-customization { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0 4px 9px; }
+.subtitle-menu .subtitle-customization button { width: auto; min-width: 0; padding: 9px 4px; border: 1px solid rgb(255 255 255 / .1); border-radius: 3px; color: rgb(255 255 255 / .4); background: rgb(255 255 255 / .025); font: .48rem 'Space Mono'; letter-spacing: .05em; text-align: center; text-transform: uppercase; }
+.subtitle-menu .subtitle-customization button:hover, .subtitle-menu .subtitle-customization button.is-selected { border-color: rgb(255 255 255 / .48); color: #fff; background: rgb(255 255 255 / .08); }
+.subtitle-customization--colors { grid-template-columns: repeat(4, 1fr); }
+.subtitle-menu .subtitle-customization--colors button { position: relative; height: 35px; }
+.subtitle-customization--colors button::before { content: ''; position: absolute; width: 15px; height: 15px; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 1px solid rgb(255 255 255 / .35); border-radius: 50%; background: var(--swatch); box-shadow: 0 0 12px color-mix(in srgb, var(--swatch) 35%, transparent); }
+.subtitle-menu .subtitle-search { border: 1px solid rgb(255 255 255 / .14); color: rgb(255 255 255 / .7); background: linear-gradient(90deg, rgb(95 195 235 / .1), transparent); font: .53rem 'Space Mono'; letter-spacing: .14em; text-align: center; }
+.subtitle-menu .subtitle-search:hover:not(:disabled) { border-color: rgb(159 224 255 / .55); background: linear-gradient(90deg, rgb(95 195 235 / .2), rgb(255 255 255 / .03)); }
+.subtitle-menu .subtitle-search:disabled, .subtitle-menu .subtitle-result:disabled { opacity: .42; cursor: wait; }
+.subtitle-menu .subtitle-result { display: grid; gap: 5px; }
+.subtitle-result strong { overflow: hidden; font-size: .62rem; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.subtitle-result small { overflow: hidden; color: rgb(255 255 255 / .28); font: .43rem 'Space Mono'; letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap; }
+.subtitle-menu .subtitle-menu__status { padding: 10px 8px 4px; color: rgb(167 222 244 / .54); font: .52rem/1.5 'Space Mono'; }
 
 @keyframes fly-forward { from { transform: translate(-25vw, 8vh) scale(.55); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes details-in { from { transform: translateY(25px); opacity: 0; } to { transform: none; opacity: 1; } }

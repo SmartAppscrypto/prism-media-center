@@ -35,6 +35,16 @@ export type SubtitleTrack = {
   isForced: boolean;
 };
 
+export type RemoteSubtitle = {
+  id: string;
+  name: string;
+  provider?: string;
+  format?: string;
+  forced: boolean;
+  hashMatch: boolean;
+  downloads?: number;
+};
+
 export type PlaybackDetails = {
   mediaSourceId: string;
   label: string;

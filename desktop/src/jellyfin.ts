@@ -1,4 +1,4 @@
-import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession } from './types';
+import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, RemoteSubtitle } from './types';
 
 const deviceIdKey = 'prism-device-id';
 
@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.12.1"`
+    `Version="0.13.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -412,4 +412,30 @@ export function adaptivePlaybackUrl(item: MediaItem, session: PrismSession, deta
 
 export function subtitleUrl(item: MediaItem, session: PrismSession, mediaSourceId: string, streamIndex: number) {
   return `${session.serverUrl}/Videos/${item.id}/${encodeURIComponent(mediaSourceId)}/Subtitles/${streamIndex}/0/Stream.vtt?api_key=${encodeURIComponent(session.accessToken)}`;
+}
+
+export async function searchRemoteSubtitles(item: MediaItem, session: PrismSession, language = 'eng'): Promise<RemoteSubtitle[]> {
+  const results = await api<Array<Record<string, unknown>>>(
+    session.serverUrl,
+    `/Items/${encodeURIComponent(item.id)}/RemoteSearch/Subtitles/${encodeURIComponent(language)}`,
+    {},
+    session.accessToken
+  );
+  return results.map((result) => ({
+    id: String(result.Id ?? ''),
+    name: String(result.Name ?? 'English subtitle'),
+    provider: typeof result.ProviderName === 'string' ? result.ProviderName : undefined,
+    format: typeof result.Format === 'string' ? result.Format : undefined,
+    forced: Boolean(result.Forced),
+    hashMatch: Boolean(result.IsHashMatch),
+    downloads: typeof result.DownloadCount === 'number' ? result.DownloadCount : undefined
+  })).filter((result) => result.id);
+}
+
+export async function downloadRemoteSubtitle(item: MediaItem, session: PrismSession, subtitleId: string) {
+  const response = await fetch(`${normalizedUrl(session.serverUrl)}/Items/${encodeURIComponent(item.id)}/RemoteSearch/Subtitles/${encodeURIComponent(subtitleId)}`, {
+    method: 'POST',
+    headers: { Authorization: authorization(session.accessToken) }
+  });
+  if (!response.ok) throw new Error(`Server returned ${response.status}.`);
 }

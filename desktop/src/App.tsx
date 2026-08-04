@@ -1,10 +1,11 @@
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
-import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, SubtitleTrack } from './types';
+import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack } from './types';
 import { compareTitles, titleInitial } from './sorting';
+import { parseWebVtt, type SubtitleCue } from './subtitles';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -317,7 +318,7 @@ function Connect({ onConnected, onDemo }: { onConnected: (session: PrismSession)
   );
 }
 
-function Player({ item, session, preferences, mediaSourceId: preferredMediaSourceId, onClose }: { item: MediaItem; session: PrismSession; preferences: PrismPreferences; mediaSourceId?: string; onClose: () => void }) {
+function Player({ item, session, preferences, mediaSourceId: preferredMediaSourceId, onPreferencesChange, onClose }: { item: MediaItem; session: PrismSession; preferences: PrismPreferences; mediaSourceId?: string; onPreferencesChange: (patch: Partial<PrismPreferences>) => void; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const idleTimerRef = useRef<number | undefined>(undefined);
   const nativeModeRef = useRef(false);
@@ -336,6 +337,11 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
   const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
   const [nativeMode, setNativeMode] = useState(false);
   const [nativeReady, setNativeReady] = useState(false);
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [subtitleLoadStatus, setSubtitleLoadStatus] = useState('');
+  const [remoteSubtitles, setRemoteSubtitles] = useState<RemoteSubtitle[]>([]);
+  const [remoteSubtitleStatus, setRemoteSubtitleStatus] = useState('');
+  const [remoteSubtitleBusy, setRemoteSubtitleBusy] = useState(false);
 
   const revealChrome = useCallback(() => {
     setChromeVisible(true);
@@ -472,14 +478,76 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
   useEffect(() => {
     if (nativeMode) {
       if (!nativeReady) return;
-      if (selectedSubtitle === null) void window.prismNativePlayer?.disableSubtitles();
-      else void window.prismNativePlayer?.selectSubtitle(selectedSubtitle);
-      return;
+      void window.prismNativePlayer?.disableSubtitles();
+      setSubtitleCues([]);
+      if (selectedSubtitle === null) {
+        setSubtitleLoadStatus('');
+        return;
+      }
+      const controller = new AbortController();
+      setSubtitleLoadStatus('Loading subtitle text…');
+      fetch(subtitleUrl(item, session, mediaSourceId, selectedSubtitle), { signal: controller.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`Server returned ${response.status}.`);
+          return response.text();
+        })
+        .then((value) => {
+          const cues = parseWebVtt(value);
+          setSubtitleCues(cues);
+          setSubtitleLoadStatus(cues.length ? '' : 'This subtitle file contains no readable text.');
+        })
+        .catch((reason: unknown) => {
+          if ((reason as { name?: string })?.name !== 'AbortError') setSubtitleLoadStatus('PRISM could not load this subtitle file.');
+        });
+      return () => controller.abort();
     }
     Array.from(videoRef.current?.textTracks ?? []).forEach((track, index) => {
       track.mode = subtitleTracks[index]?.index === selectedSubtitle ? 'showing' : 'disabled';
     });
   }, [item, mediaSourceId, nativeMode, nativeReady, selectedSubtitle, session, subtitleTracks]);
+
+  const activeSubtitleText = useMemo(() => subtitleCues
+    .filter((cue) => currentTime >= cue.start && currentTime < cue.end)
+    .map((cue) => cue.text), [currentTime, subtitleCues]);
+
+  async function findForcedEnglishSubtitles() {
+    setRemoteSubtitleBusy(true);
+    setRemoteSubtitleStatus('Searching PRISM Server…');
+    setRemoteSubtitles([]);
+    try {
+      const results = await searchRemoteSubtitles(item, session, 'eng');
+      const forced = results.filter((result) => result.forced).sort((a, b) => Number(b.hashMatch) - Number(a.hashMatch) || (b.downloads ?? 0) - (a.downloads ?? 0));
+      setRemoteSubtitles(forced.slice(0, 6));
+      setRemoteSubtitleStatus(forced.length ? '' : 'No forced-English matches were found. A subtitle provider may need to be configured on PRISM Server.');
+    } catch {
+      setRemoteSubtitleStatus('PRISM Server could not search subtitle providers.');
+    } finally {
+      setRemoteSubtitleBusy(false);
+    }
+  }
+
+  async function installRemoteSubtitle(result: RemoteSubtitle) {
+    setRemoteSubtitleBusy(true);
+    setRemoteSubtitleStatus('Adding forced English subtitles…');
+    try {
+      await downloadRemoteSubtitle(item, session, result.id);
+      let addedTrack: SubtitleTrack | undefined;
+      for (let attempt = 0; attempt < 8 && !addedTrack; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 750));
+        const details = await getPlaybackDetails(item, session, mediaSourceId);
+        setSubtitleTracks(details.subtitles);
+        addedTrack = details.subtitles.find((track) => track.isForced && ['eng', 'en'].includes(track.language?.toLowerCase() ?? ''));
+      }
+      if (addedTrack) {
+        setSelectedSubtitle(addedTrack.index);
+        setRemoteSubtitleStatus('Forced English added and selected.');
+      } else setRemoteSubtitleStatus('The download was queued. It will appear after the server refreshes this film.');
+    } catch {
+      setRemoteSubtitleStatus('PRISM Server could not add that subtitle.');
+    } finally {
+      setRemoteSubtitleBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!nativeMode || !window.prismNativePlayer) return;
@@ -547,7 +615,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
       className={`player ${nativeMode ? 'player--native' : ''} ${chromeVisible ? '' : 'player--idle'}`}
       style={{
         '--subtitle-color': { white: '#ffffff', warm: '#fff2d2', yellow: '#ffe45c', cyan: '#a9f5ff' }[preferences.subtitleColor],
-        '--subtitle-size': { small: '82%', medium: '100%', large: '126%' }[preferences.subtitleSize],
+        '--subtitle-size': { small: 'clamp(1.05rem, 1.75vw, 1.7rem)', medium: 'clamp(1.25rem, 2.15vw, 2.15rem)', large: 'clamp(1.5rem, 2.7vw, 2.75rem)' }[preferences.subtitleSize],
         '--subtitle-background': { none: 'transparent', soft: 'rgb(0 0 0 / .48)', strong: 'rgb(0 0 0 / .82)' }[preferences.subtitleBackground]
       } as React.CSSProperties}
       onMouseMove={revealChrome}
@@ -588,6 +656,11 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
         ))}
       </video>
       {nativeMode && <button className="player__native-click-target" onClick={togglePlayback} aria-label={paused ? 'Play' : 'Pause'} />}
+      {nativeMode && selectedSubtitle !== null && activeSubtitleText.length > 0 && (
+        <div className="player__subtitle-layer" aria-live="off">
+          {activeSubtitleText.map((text, index) => <span key={`${text}-${index}`}>{text}</span>)}
+        </div>
+      )}
       <button onClick={onClose} className="player__close player__chrome back-button" aria-label="Close player"><span aria-hidden="true">←</span><span>BACK</span></button>
       {playbackError && <p className="player__error" role="alert">{playbackError}</p>}
       <div className="player__controls player__chrome">
@@ -644,15 +717,45 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
           {subtitleMenuOpen && (
             <div className="subtitle-menu">
               <p>SUBTITLES</p>
-              <button className={selectedSubtitle === null ? 'is-selected' : ''} onClick={() => setSelectedSubtitle(null)}>Off</button>
+              <button className={`subtitle-track-option ${selectedSubtitle === null ? 'is-selected' : ''}`} onClick={() => setSelectedSubtitle(null)}>Off</button>
               {subtitleTracks.map((track) => (
                 <button
                   key={track.index}
-                  className={selectedSubtitle === track.index ? 'is-selected' : ''}
+                  className={`subtitle-track-option ${selectedSubtitle === track.index ? 'is-selected' : ''}`}
                   onClick={() => setSelectedSubtitle(track.index)}
                 >{track.label}{track.isForced ? ' · FORCED' : ''}</button>
               ))}
               {!subtitleTracks.length && <span>No text subtitles</span>}
+              {subtitleLoadStatus && <span className="subtitle-menu__status">{subtitleLoadStatus}</span>}
+
+              <p>APPEARANCE</p>
+              <div className="subtitle-customization subtitle-customization--colors" aria-label="Subtitle color">
+                {(['white', 'warm', 'yellow', 'cyan'] as const).map((color) => (
+                  <button
+                    key={color}
+                    className={preferences.subtitleColor === color ? 'is-selected' : ''}
+                    style={{ '--swatch': { white: '#fff', warm: '#fff2d2', yellow: '#ffe45c', cyan: '#a9f5ff' }[color] } as React.CSSProperties}
+                    onClick={() => onPreferencesChange({ subtitleColor: color })}
+                    aria-label={`${color} subtitles`}
+                  />
+                ))}
+              </div>
+              <div className="subtitle-customization" aria-label="Subtitle size">
+                {(['small', 'medium', 'large'] as const).map((size) => <button key={size} className={preferences.subtitleSize === size ? 'is-selected' : ''} onClick={() => onPreferencesChange({ subtitleSize: size })}>{size}</button>)}
+              </div>
+              <div className="subtitle-customization" aria-label="Subtitle background">
+                {(['none', 'soft', 'strong'] as const).map((background) => <button key={background} className={preferences.subtitleBackground === background ? 'is-selected' : ''} onClick={() => onPreferencesChange({ subtitleBackground: background })}>{background}</button>)}
+              </div>
+
+              <p>FOREIGN PARTS ONLY</p>
+              <button className="subtitle-search" disabled={remoteSubtitleBusy} onClick={() => void findForcedEnglishSubtitles()}>{remoteSubtitleBusy ? 'SEARCHING…' : 'FIND FORCED ENGLISH'}</button>
+              {remoteSubtitles.map((result) => (
+                <button className="subtitle-result" key={result.id} disabled={remoteSubtitleBusy} onClick={() => void installRemoteSubtitle(result)}>
+                  <strong>{result.name}</strong>
+                  <small>{[result.provider, result.format, result.hashMatch ? 'PERFECT MATCH' : ''].filter(Boolean).join(' · ')}</small>
+                </button>
+              ))}
+              {remoteSubtitleStatus && <span className="subtitle-menu__status">{remoteSubtitleStatus}</span>}
             </div>
           )}
         </div>
@@ -955,7 +1058,7 @@ export default function App() {
   const dragRegion = <div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />;
 
   if (!session && !demo) return <>{dragRegion}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
-  if (playingItem && session) return <>{dragRegion}<Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onClose={() => setPlayingItem(null)} /></>;
+  if (playingItem && session) return <>{dragRegion}<Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onPreferencesChange={updatePreferences} onClose={() => setPlayingItem(null)} /></>;
 
   const seasons = [...new Set(seriesEpisodes.map((episode) => episode.seasonNumber ?? 0))];
   const visibleEpisodes = seriesEpisodes.filter((episode) => (episode.seasonNumber ?? 0) === selectedSeason);
