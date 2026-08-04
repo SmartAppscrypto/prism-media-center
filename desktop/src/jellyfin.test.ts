@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -23,12 +23,19 @@ describe('playback selection', () => {
     expect(directPlayMimeType({ ...baseDetails, path: '/media/clip.mkv', container: 'matroska,webm' })).toBeUndefined();
   });
 
+  it('describes preserved HEVC and E-AC-3 streams for client capability checks', () => {
+    expect(directStreamMimeType({ ...baseDetails, videoCodec: 'hevc', audioCodec: 'eac3' })).toBe('video/mp4; codecs="hvc1, ec-3"');
+  });
+
   it('allows audio stream-copy in adaptive playback', () => {
     const item = { id: 'item' } as MediaItem;
     const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' } as PrismSession;
-    const url = new URL(adaptivePlaybackUrl(item, session, 'source'));
+    const url = new URL(adaptivePlaybackUrl(item, session, { ...baseDetails, path: '/media/feature.mkv', container: 'mkv', videoCodec: 'hevc', audioCodec: 'eac3' }));
     expect(url.searchParams.get('AllowVideoStreamCopy')).toBe('true');
     expect(url.searchParams.get('AllowAudioStreamCopy')).toBe('true');
+    expect(url.searchParams.get('VideoCodec')).toBe('hevc');
+    expect(url.searchParams.get('AudioCodec')).toBe('eac3');
+    expect(url.searchParams.get('SegmentContainer')).toBe('mp4');
     expect(url.searchParams.get('MaxAudioChannels')).toBe('8');
   });
 

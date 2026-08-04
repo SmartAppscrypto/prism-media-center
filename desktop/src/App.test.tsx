@@ -28,7 +28,10 @@ describe('Prism shell', () => {
     expect(screen.getByText('PRODUCTION FORMAT')).toBeInTheDocument();
     expect(screen.getByText('YOUR COPY')).toBeInTheDocument();
     expect(within(morePage).getByRole('button', { name: 'Open Vermilion Coast' })).toBeInTheDocument();
-    fireEvent.click(within(morePage).getByRole('button', { name: 'Open Vermilion Coast' }));
+    fireEvent.click(within(morePage).getByRole('button', { name: 'Back to film' }));
+    expect(screen.queryByRole('region', { name: 'More about The Long Meridian' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'More about The Long Meridian' }));
+    fireEvent.click(within(screen.getByRole('region', { name: 'More about The Long Meridian' })).getByRole('button', { name: 'Open Vermilion Coast' }));
     expect(screen.getByRole('heading', { name: 'Vermilion Coast' })).toBeInTheDocument();
   });
 

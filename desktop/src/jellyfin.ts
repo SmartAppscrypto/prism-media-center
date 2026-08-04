@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.10.1"`
+    `Version="0.11.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -353,6 +353,29 @@ export function directPlayMimeType(details: PlaybackDetails) {
   return undefined;
 }
 
+export function directStreamMimeType(details: PlaybackDetails) {
+  const videoCodecs: Record<string, string> = {
+    h264: 'avc1.42E01E',
+    hevc: 'hvc1',
+    h265: 'hvc1',
+    av1: 'av01.0.05M.08',
+    vp8: 'vp8',
+    vp9: 'vp09.00.10.08'
+  };
+  const audioCodecs: Record<string, string> = {
+    aac: 'mp4a.40.2',
+    mp3: 'mp3',
+    opus: 'opus',
+    vorbis: 'vorbis',
+    ac3: 'ac-3',
+    eac3: 'ec-3'
+  };
+  const videoCodec = videoCodecs[details.videoCodec?.toLowerCase() ?? ''];
+  const audioCodec = details.audioCodec ? audioCodecs[details.audioCodec.toLowerCase()] : undefined;
+  if (!videoCodec || (details.audioCodec && !audioCodec)) return undefined;
+  return `video/mp4; codecs="${audioCodec ? `${videoCodec}, ${audioCodec}` : videoCodec}"`;
+}
+
 export function directPlaybackUrl(item: MediaItem, session: PrismSession, details: PlaybackDetails) {
   const extension = sourceExtension(details) || 'mp4';
   const params = new URLSearchParams({
@@ -364,18 +387,20 @@ export function directPlaybackUrl(item: MediaItem, session: PrismSession, detail
   return `${session.serverUrl}/Videos/${item.id}/stream.${encodeURIComponent(extension)}?${params}`;
 }
 
-export function adaptivePlaybackUrl(item: MediaItem, session: PrismSession, mediaSourceId = item.id) {
+export function adaptivePlaybackUrl(item: MediaItem, session: PrismSession, details: PlaybackDetails) {
+  const videoCodec = ({ h265: 'hevc' } as Record<string, string>)[details.videoCodec?.toLowerCase() ?? '']
+    ?? details.videoCodec?.toLowerCase()
+    ?? 'h264';
+  const audioCodec = details.audioCodec?.toLowerCase() ?? 'aac';
   const params = new URLSearchParams({
     api_key: session.accessToken,
     DeviceId: deviceId(),
-    MediaSourceId: mediaSourceId,
+    MediaSourceId: details.mediaSourceId,
     PlaySessionId: crypto.randomUUID(),
-    VideoCodec: 'h264',
-    AudioCodec: 'aac',
-    AudioBitrate: '192000',
+    VideoCodec: videoCodec,
+    AudioCodec: audioCodec,
     MaxAudioChannels: '8',
-    TranscodingAudioChannels: '2',
-    SegmentContainer: 'ts',
+    SegmentContainer: 'mp4',
     MinSegments: '1',
     BreakOnNonKeyFrames: 'true',
     AllowVideoStreamCopy: 'true',

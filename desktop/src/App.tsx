@@ -1,7 +1,7 @@
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
 import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, SubtitleTrack } from './types';
 
@@ -170,7 +170,7 @@ function MoreDetails({
   return (
     <section className="more-page" aria-label={`More about ${item.title}`}>
       <div className="more-page__hero">
-        <button className="reshelve" onClick={onBack}>← BACK TO FILM</button>
+        <button className="reshelve back-button" aria-label="Back to film" onClick={onBack}><span aria-hidden="true">←</span><span>BACK TO FILM</span></button>
         <p className="eyebrow">THE FULL PICTURE</p>
         <h2>{item.title}</h2>
         {details?.tagline && <p className="more-page__tagline">“{details.tagline}”</p>}
@@ -364,12 +364,19 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
     let hls: Hls | undefined;
     let cancelled = false;
     let usingDirectPlay = false;
-    let activeMediaSourceId = item.id;
+    let activeDetails: PlaybackDetails | undefined;
 
-    const startAdaptivePlayback = (mediaSourceId: string) => {
+    const startAdaptivePlayback = (details: PlaybackDetails) => {
       usingDirectPlay = false;
       setPlaybackError('');
-      const source = adaptivePlaybackUrl(item, session, mediaSourceId);
+      const streamMimeType = directStreamMimeType(details);
+      if (!streamMimeType || !MediaSource.isTypeSupported(streamMimeType)) {
+        const format = [details.videoCodec?.toUpperCase(), details.audioCodec?.toUpperCase()].filter(Boolean).join(' / ');
+        setPaused(true);
+        setPlaybackError(`This PRISM desktop decoder does not support ${format || 'these media streams'}. Your server preserved the original streams, so no NAS transcoding was used.`);
+        return;
+      }
+      const source = adaptivePlaybackUrl(item, session, details);
       if (Hls.isSupported()) {
         hls?.destroy();
         hls = new Hls({ enableWorker: true });
@@ -377,7 +384,10 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => setPaused(true)));
         hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) setPlaybackError('Playback could not start. This format may require a transcoder your server cannot provide.');
+          if (data.fatal) {
+            const format = [details.videoCodec?.toUpperCase(), details.audioCodec?.toUpperCase()].filter(Boolean).join(' / ');
+            setPlaybackError(`Playback could not start in direct-stream mode${format ? ` (${format})` : ''}. This copy may need a client-compatible audio track or container.`);
+          }
         });
       } else {
         video.src = source;
@@ -386,13 +396,13 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
     };
 
     const onVideoError = () => {
-      if (usingDirectPlay) startAdaptivePlayback(activeMediaSourceId);
+      if (usingDirectPlay && activeDetails) startAdaptivePlayback(activeDetails);
     };
     video.addEventListener('error', onVideoError);
 
     getPlaybackDetails(item, session, preferredMediaSourceId).then((details) => {
       if (cancelled) return;
-      activeMediaSourceId = details.mediaSourceId;
+      activeDetails = details;
       setMediaSourceId(details.mediaSourceId);
       setSubtitleTracks(details.subtitles);
       const english = details.subtitles.find((track) => ['eng', 'en'].includes(track.language?.toLowerCase() ?? ''));
@@ -408,7 +418,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
         video.src = directPlaybackUrl(item, session, details);
         void video.play().catch(() => setPaused(true));
       } else {
-        startAdaptivePlayback(details.mediaSourceId);
+        startAdaptivePlayback(details);
       }
     }).catch(() => setPlaybackError('Prism could not prepare this title for playback.'));
 
@@ -498,7 +508,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
           />
         ))}
       </video>
-      <button onClick={onClose} className="player__close player__chrome" aria-label="Close player">← BACK</button>
+      <button onClick={onClose} className="player__close player__chrome back-button" aria-label="Close player"><span aria-hidden="true">←</span><span>BACK</span></button>
       {playbackError && <p className="player__error" role="alert">{playbackError}</p>}
       <div className="player__controls player__chrome">
         <button onClick={togglePlayback} aria-label={paused ? 'Play' : 'Pause'}>{paused ? '▶' : 'Ⅱ'}</button>
@@ -1006,7 +1016,7 @@ export default function App() {
           ) : <>
             <div className="inspect__poster"><Poster item={selected} /></div>
             <article className="inspect__copy">
-            <button className="reshelve" onClick={() => setSelected(null)}>← RESHELVE</button>
+            <button className="reshelve back-button" aria-label="Reshelve title" onClick={() => setSelected(null)}><span aria-hidden="true">←</span><span>RESHELVE</span></button>
             <p className="eyebrow">{[selected.year, formatRuntime(selected.runtimeMinutes), selected.type.toUpperCase()].filter(Boolean).join(' · ')}</p>
             <h2>{selected.title}</h2>
             <p className="overview">{selected.overview || 'No synopsis is available for this title yet.'}</p>
