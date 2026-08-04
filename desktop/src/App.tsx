@@ -9,7 +9,7 @@ import { compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
 import { analyseFrequencyData, type AudioBands } from './audioReactive';
 import { getAlbumMetadata } from './musicbrainz';
-import { activeLyricIndex, lyricLineProgress, resolveTrackLyrics } from './lyrics';
+import { activeLyricIndex, resolveTrackLyrics } from './lyrics';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -179,6 +179,7 @@ function AlbumArtwork({ item, metadata }: { item: MediaItem; metadata: AlbumMeta
 
 function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSession }) {
   const playerRef = useRef<HTMLElement>(null);
+  const waveformRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const autoplayRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -193,6 +194,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   const [playing, setPlaying] = useState(false);
   const [tracksOpen, setTracksOpen] = useState(false);
   const [lyricsOpen, setLyricsOpen] = useState(false);
+  const [lyricsExpanded, setLyricsExpanded] = useState(false);
   const [lyrics, setLyrics] = useState<TrackLyrics | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricsStatus, setLyricsStatus] = useState('');
@@ -202,6 +204,12 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   const [status, setStatus] = useState('DEVELOPING TRACK LIST…');
   const currentTrack = tracks[trackIndex];
   const activeLine = useMemo(() => lyrics?.synced ? activeLyricIndex(lyrics.lines, currentTime) : -1, [currentTime, lyrics]);
+  const compactLyricLines = useMemo(() => {
+    if (!lyrics?.lines.length) return [];
+    if (!lyrics.synced) return lyrics.lines.slice(0, 4).map((line, index) => ({ line, index }));
+    const start = Math.max(0, Math.min(lyrics.lines.length - 4, activeLine < 0 ? 0 : activeLine - 1));
+    return lyrics.lines.slice(start, start + 4).map((line, offset) => ({ line, index: start + offset }));
+  }, [activeLine, lyrics]);
 
   const resetReactiveVisuals = useCallback(() => {
     window.cancelAnimationFrame(animationFrameRef.current ?? 0);
@@ -211,7 +219,8 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
     stage?.style.setProperty('--audio-mid', '0');
     stage?.style.setProperty('--audio-high', '0');
     stage?.style.setProperty('--audio-energy', '0');
-    playerRef.current?.querySelectorAll<HTMLElement>('.album-player__waveform i').forEach((bar) => { bar.style.transform = 'scaleY(.08)'; });
+    waveformRef.current?.style.setProperty('--wave-energy', '0');
+    waveformRef.current?.querySelectorAll<HTMLElement>('i').forEach((bar) => { bar.style.transform = 'scaleY(.08)'; });
   }, []);
 
   const runAudioAnalysis = useCallback(async () => {
@@ -256,7 +265,9 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
       stage?.style.setProperty('--audio-high', bands.high.toFixed(3));
       stage?.style.setProperty('--audio-energy', bands.energy.toFixed(3));
 
-      const bars = player.querySelectorAll<HTMLElement>('.album-player__waveform i');
+      const waveform = waveformRef.current;
+      waveform?.style.setProperty('--wave-energy', bands.energy.toFixed(3));
+      const bars = waveform?.querySelectorAll<HTMLElement>('i') ?? [];
       bars.forEach((bar, index) => {
         const bin = Math.min(frequencyData.length - 1, Math.floor((index / Math.max(1, bars.length - 1)) ** 1.65 * frequencyData.length * .72));
         const level = (frequencyData[bin] ?? 0) / 255;
@@ -313,7 +324,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   useEffect(() => {
     setLyrics(null);
     setLyricsStatus('');
-    if (!lyricsOpen || !currentTrack) return;
+    if ((!lyricsOpen && !lyricsExpanded) || !currentTrack) return;
     let cancelled = false;
     setLyricsLoading(true);
     resolveTrackLyrics(currentTrack, album, session).then((result) => {
@@ -326,7 +337,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
       if (!cancelled) setLyricsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [album, currentTrack, lyricsOpen, session]);
+  }, [album, currentTrack, lyricsExpanded, lyricsOpen, session]);
 
   useEffect(() => {
     if (activeLine < 0) return;
@@ -392,15 +403,17 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
         }} aria-label="Track position" />
         <span>{formatClock(duration)}</span>
       </div>
-      <div className="album-player__waveform" aria-hidden="true">
-        {Array.from({ length: 96 }, (_, index) => <i key={index} style={{ '--bar': `${18 + ((index * 37) % 80)}%` } as React.CSSProperties} />)}
-      </div>
+      {!lyricsExpanded && createPortal(
+        <div ref={waveformRef} className="album-player__waveform" aria-hidden="true" style={{ '--selected-hue': album.hue } as React.CSSProperties}>
+          {Array.from({ length: 96 }, (_, index) => <i key={index} style={{ '--bar': `${18 + ((index * 37) % 80)}%` } as React.CSSProperties} />)}
+        </div>, document.body
+      )}
       {status && <p className="album-player__status">{status}</p>}
       {tracks.length > 0 && (
         <>
           <div className="album-player__modes">
-            <button className="album-player__tracks-toggle" onClick={() => { setTracksOpen((open) => !open); setLyricsOpen(false); }} aria-expanded={tracksOpen}>TRACKS · {tracks.length}</button>
-            <button className="album-player__lyrics-toggle" onClick={() => { setLyricsOpen(true); setTracksOpen(false); }} aria-expanded={lyricsOpen}>LYRICS</button>
+            <button className="album-player__tracks-toggle" onClick={() => { setTracksOpen((open) => !open); setLyricsOpen(false); setLyricsExpanded(false); }} aria-expanded={tracksOpen}>TRACKS · {tracks.length}</button>
+            <button className="album-player__lyrics-toggle" onClick={() => { setLyricsOpen((open) => !open); setLyricsExpanded(false); setTracksOpen(false); }} aria-expanded={lyricsOpen}>LYRICS</button>
           </div>
           {tracksOpen && <div className="album-track-list" aria-label="Tracks">
             {tracks.map((track, index) => (
@@ -411,13 +424,32 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
               </button>
             ))}
           </div>}
+          {lyricsOpen && <section className="compact-lyrics" aria-label={`Lyrics preview for ${currentTrack?.title || album.title}`}>
+            <div className="compact-lyrics__top">
+              <small>LYRICS {lyrics?.source ? `· ${lyrics.source}` : ''}</small>
+              <button className="compact-lyrics__expand" onClick={() => setLyricsExpanded(true)} aria-label="Expand lyrics to full screen">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H3v4M13 3h4v4M17 13v4h-4M7 17H3v-4" /></svg>
+              </button>
+            </div>
+            <div className={`compact-lyrics__lines ${lyrics?.synced ? 'is-synced' : ''}`} aria-live="polite">
+              {lyricsLoading && <p>FINDING THE WORDS…</p>}
+              {!lyricsLoading && lyrics?.instrumental && <p>◇ &nbsp; INSTRUMENTAL</p>}
+              {!lyricsLoading && lyricsStatus && <p>{lyricsStatus}</p>}
+              {!lyricsLoading && compactLyricLines.map(({ line, index }) => <button
+                key={`${line.startSeconds ?? 'plain'}-${index}`}
+                className={index === activeLine ? 'is-active' : index < activeLine ? 'is-past' : ''}
+                onClick={() => seekToLyric(index)}
+                disabled={line.startSeconds === undefined}
+              >{line.text}</button>)}
+            </div>
+          </section>}
         </>
       )}
-      {lyricsOpen && createPortal(
+      {lyricsExpanded && createPortal(
         <section className="lyrics-stage" aria-label={`Lyrics for ${currentTrack?.title || album.title}`}>
           <div className="lyrics-stage__backdrop" style={album.imageUrl ? { backgroundImage: `url("${album.imageUrl}")` } : undefined} />
           <div className="lyrics-stage__header">
-            <button onClick={() => setLyricsOpen(false)} aria-label="Close lyrics"><span aria-hidden="true">←</span><span>BACK TO ALBUM</span></button>
+            <button onClick={() => setLyricsExpanded(false)} aria-label="Return to compact lyrics"><span aria-hidden="true">←</span><span>BACK TO ALBUM</span></button>
             <div><strong>{currentTrack?.title || album.title}</strong><small>{currentTrack?.artist || album.artist} · {lyrics?.source || 'PRISM LYRICS'}</small></div>
           </div>
           <div className={`lyrics-stage__lines ${lyrics?.synced ? 'is-synced' : 'is-plain'}`} aria-live="polite">
@@ -425,12 +457,10 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
             {!lyricsLoading && lyrics?.instrumental && <p className="lyrics-stage__instrumental"><span>◇</span>INSTRUMENTAL</p>}
             {!lyricsLoading && lyricsStatus && <p className="lyrics-stage__message">{lyricsStatus}</p>}
             {!lyricsLoading && lyrics?.lines.map((line, index) => {
-              const progress = index === activeLine ? lyricLineProgress(lyrics.lines, index, currentTime, duration) : index < activeLine ? 1 : 0;
               return <button
                 key={`${line.startSeconds ?? 'plain'}-${index}`}
                 ref={(element) => { lyricLineRefs.current[index] = element; }}
                 className={index === activeLine ? 'is-active' : index < activeLine ? 'is-past' : ''}
-                style={{ '--line-progress': progress } as React.CSSProperties}
                 onClick={() => seekToLyric(index)}
                 disabled={line.startSeconds === undefined}
               ><span>{line.text || '♪'}</span></button>;
