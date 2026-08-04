@@ -20,8 +20,26 @@ export type MediaItem = {
   overview?: string;
   imageUrl?: string;
   backdropUrl?: string;
+  musicBrainzAlbumId?: string;
+  musicBrainzReleaseGroupId?: string;
   type: 'Movie' | 'Series' | 'Episode' | 'Video' | 'MusicAlbum' | 'Audio';
   hue: number;
+};
+
+export type AlbumMetadata = {
+  releaseId: string;
+  releaseGroupId?: string;
+  releaseDate?: string;
+  country?: string;
+  status?: string;
+  format?: string;
+  trackCount?: number;
+  barcode?: string;
+  labels: string[];
+  catalogNumbers: string[];
+  primaryType?: string;
+  backCoverUrl?: string;
+  sourceUrl: string;
 };
 
 export type LibraryView = {

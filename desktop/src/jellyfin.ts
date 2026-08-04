@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.13.3"`
+    `Version="0.13.4"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -121,6 +121,8 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
       backdropUrl: backdropTags?.length
         ? `${session.serverUrl}/Items/${id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
         : undefined,
+      musicBrainzAlbumId: providerIds?.MusicBrainzAlbum,
+      musicBrainzReleaseGroupId: providerIds?.MusicBrainzReleaseGroup,
       providerKey: item.Type === 'Series'
         ? providerIds?.Tvdb ? `tvdb:${providerIds.Tvdb}`
           : providerIds?.Tmdb ? `tmdb:${providerIds.Tmdb}`
@@ -150,6 +152,7 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
 function mapMediaItem(item: Record<string, unknown>, session: PrismSession, index = 0): MediaItem {
   const id = String(item.Id);
   const backdropTags = item.BackdropImageTags as string[] | undefined;
+  const providerIds = item.ProviderIds as Record<string, string> | undefined;
   return {
     id,
     title: String(item.Name ?? 'Untitled'),
@@ -169,7 +172,9 @@ function mapMediaItem(item: Record<string, unknown>, session: PrismSession, inde
     imageUrl: `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}`,
     backdropUrl: backdropTags?.length
       ? `${session.serverUrl}/Items/${id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
-      : undefined
+      : undefined,
+    musicBrainzAlbumId: providerIds?.MusicBrainzAlbum,
+    musicBrainzReleaseGroupId: providerIds?.MusicBrainzReleaseGroup
   };
 }
 
@@ -179,7 +184,7 @@ export async function getAlbumTracks(album: MediaItem, session: PrismSession): P
     ParentId: album.id,
     Recursive: 'true',
     IncludeItemTypes: 'Audio',
-    Fields: 'AlbumArtist,Artists,IndexNumber,ParentIndexNumber,RunTimeTicks',
+    Fields: 'AlbumArtist,Artists,IndexNumber,ParentIndexNumber,RunTimeTicks,ProviderIds',
     SortBy: 'ParentIndexNumber,IndexNumber,SortName',
     SortOrder: 'Ascending'
   });

@@ -3,10 +3,11 @@ import Hls from 'hls.js';
 import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
-import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack } from './types';
+import type { AlbumMetadata, LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack } from './types';
 import { compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
 import { analyseFrequencyData, type AudioBands } from './audioReactive';
+import { getAlbumMetadata } from './musicbrainz';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -147,6 +148,30 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
     <button className={className} data-letter={titleInitial(item.title)} style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}${item.artist ? ` by ${item.artist}` : ''}`}>{artwork}</button>
   ) : (
     <div className={className} style={style} aria-label={`${item.title} ${isAlbum ? 'album cover' : 'poster'}`}>{artwork}</div>
+  );
+}
+
+function AlbumArtwork({ item, metadata }: { item: MediaItem; metadata: AlbumMetadata | null }) {
+  const [flipped, setFlipped] = useState(false);
+  const backCoverUrl = metadata?.backCoverUrl;
+  useEffect(() => setFlipped(false), [item.id]);
+  if (!backCoverUrl) return <Poster item={item} />;
+  return (
+    <button
+      className={`album-artwork-flip ${flipped ? 'is-flipped' : ''}`}
+      onClick={() => setFlipped((value) => !value)}
+      aria-label={`${flipped ? 'Show front cover' : 'Show rear cover'} for ${item.title}`}
+      aria-pressed={flipped}
+    >
+      <span className="album-artwork-flip__inner">
+        <span className="album-artwork-flip__face album-artwork-flip__front"><Poster item={item} /></span>
+        <span className="album-artwork-flip__face album-artwork-flip__back">
+          <img src={backCoverUrl} alt={`Rear cover for ${item.title}`} />
+          <small>CLICK TO RETURN TO FRONT</small>
+        </span>
+      </span>
+      <span className="album-artwork-flip__hint">FLIP COVER</span>
+    </button>
   );
 }
 
@@ -480,6 +505,78 @@ function MoreDetails({
             {similar.length ? <div className="similar-row">{similar.map((similarItem) => (
               <Poster key={similarItem.id} item={similarItem} onSelect={onSelect} />
             ))}</div> : <p className="more-page__empty">No related films were found in this library.</p>}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AlbumMoreDetails({
+  item,
+  details,
+  metadata,
+  loading,
+  error,
+  onBack
+}: {
+  item: MediaItem;
+  details: MediaDetails | null;
+  metadata: AlbumMetadata | null;
+  loading: boolean;
+  error: string;
+  onBack: () => void;
+}) {
+  const credits = details?.people ?? [];
+  return (
+    <section className="more-page album-more" aria-label={`More about ${item.title}`}>
+      <div className="more-page__hero album-more__hero">
+        <button className="reshelve back-button" aria-label="Back to album" onClick={onBack}><span aria-hidden="true">←</span><span>BACK TO ALBUM</span></button>
+        <p className="eyebrow">THE COMPLETE EDITION</p>
+        <h2>{item.title}</h2>
+        {item.artist && <p className="more-page__tagline">{item.artist}</p>}
+        <div className="more-page__facts">
+          <span>{metadata?.releaseDate || item.year || '—'}<small>RELEASE</small></span>
+          <span>{metadata?.format || '—'}<small>FORMAT</small></span>
+          <span>{metadata?.country || '—'}<small>EDITION</small></span>
+          <span>{metadata?.trackCount || '—'}<small>TRACKS</small></span>
+          <span>{metadata?.status || '—'}<small>STATUS</small></span>
+        </div>
+      </div>
+
+      {loading && <p className="more-page__status">DEVELOPING THE LINER NOTES…</p>}
+      {error && <p className="more-page__status more-page__status--error">{error}</p>}
+      {!loading && (
+        <div className="more-page__body">
+          <section className="more-section album-more__edition">
+            <p className="eyebrow">THIS EDITION</p>
+            <dl className="metadata-list">
+              <div><dt>ARTIST</dt><dd>{item.artist || '—'}</dd></div>
+              <div><dt>LABEL</dt><dd>{metadata?.labels.join(' · ') || details?.studios.join(' · ') || '—'}</dd></div>
+              <div><dt>CATALOG NUMBER</dt><dd>{metadata?.catalogNumbers.join(' · ') || '—'}</dd></div>
+              <div><dt>BARCODE</dt><dd>{metadata?.barcode || '—'}</dd></div>
+              <div><dt>TYPE</dt><dd>{metadata?.primaryType || 'Album'}</dd></div>
+              <div><dt>GENRES</dt><dd>{details?.genres.join(' · ') || '—'}</dd></div>
+            </dl>
+            {metadata && <a className="production-source" href={metadata.sourceUrl} target="_blank" rel="noreferrer">EDITION DATA FROM MUSICBRAINZ ↗</a>}
+          </section>
+
+          <section className="more-section album-more__artwork">
+            <p className="eyebrow">THE PACKAGING</p>
+            <div className="album-artwork-pair">
+              <figure><img src={item.imageUrl} alt={`Front cover for ${item.title}`} /><figcaption>FRONT</figcaption></figure>
+              {metadata?.backCoverUrl
+                ? <figure><img src={metadata.backCoverUrl} alt={`Rear cover for ${item.title}`} /><figcaption>REAR</figcaption></figure>
+                : <div className="album-artwork-missing"><span>REAR ARTWORK</span><small>NO COMMUNITY SCAN IS AVAILABLE FOR THIS EDITION</small></div>}
+            </div>
+            <p className="album-artwork-source">COVER IMAGES ARE CURATED BY THE MUSICBRAINZ COMMUNITY AND ARCHIVED BY THE INTERNET ARCHIVE.</p>
+          </section>
+
+          <section className="more-section album-more__credits">
+            <p className="eyebrow">CREDITS &amp; CONTRIBUTORS</p>
+            {credits.length ? <div className="crew-list">{credits.map((person, index) => (
+              <div key={`${person.id || person.name}-${index}`}><span>{person.name}</span><small>{person.role || person.type || 'Contributor'}</small></div>
+            ))}</div> : <p className="more-page__empty">Detailed credits have not been added to this album in PRISM Server yet.</p>}
           </section>
         </div>
       )}
@@ -998,6 +1095,9 @@ export default function App() {
   const [similarItems, setSimilarItems] = useState<MediaItem[]>([]);
   const [moreLoading, setMoreLoading] = useState(false);
   const [moreError, setMoreError] = useState('');
+  const [albumMetadata, setAlbumMetadata] = useState<AlbumMetadata | null>(null);
+  const [albumMetadataLoading, setAlbumMetadataLoading] = useState(false);
+  const [albumMetadataError, setAlbumMetadataError] = useState('');
   const [tmdbConfigured, setTmdbConfigured] = useState(false);
   const [tmdbEditorOpen, setTmdbEditorOpen] = useState(false);
   const [tmdbTokenDraft, setTmdbTokenDraft] = useState('');
@@ -1043,6 +1143,22 @@ export default function App() {
   useEffect(() => window.prismMetadata?.onProductionProgress(setProductionScan), []);
 
   useEffect(() => {
+    setAlbumMetadata(null);
+    setAlbumMetadataError('');
+    if (!selected || (selected.type !== 'MusicAlbum' && selected.type !== 'Audio')) return;
+    let cancelled = false;
+    setAlbumMetadataLoading(true);
+    getAlbumMetadata(selected).then((metadata) => {
+      if (!cancelled) setAlbumMetadata(metadata);
+    }).catch((reason: unknown) => {
+      if (!cancelled) setAlbumMetadataError(reason instanceof Error ? reason.message : 'Album metadata could not be loaded.');
+    }).finally(() => {
+      if (!cancelled) setAlbumMetadataLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [selected]);
+
+  useEffect(() => {
     setPlaybackVersions([]);
     setSelectedMediaSourceId(undefined);
     setMoreOpen(false);
@@ -1070,6 +1186,18 @@ export default function App() {
     let cancelled = false;
     setMoreLoading(true);
     setMoreError('');
+    if (selected.type === 'MusicAlbum' || selected.type === 'Audio') {
+      Promise.all([getItemDetails(selected, session), getAlbumMetadata(selected)]).then(([details, metadata]) => {
+        if (cancelled) return;
+        setMediaDetails(details);
+        setAlbumMetadata(metadata);
+      }).catch((reason: unknown) => {
+        if (!cancelled) setMoreError(reason instanceof Error ? reason.message : 'The album details could not be loaded.');
+      }).finally(() => {
+        if (!cancelled) setMoreLoading(false);
+      });
+      return () => { cancelled = true; };
+    }
     Promise.all([getItemDetails(selected, session), getSimilarItems(selected, session)]).then(async ([details, similar]) => {
       if (cancelled) return;
       const [financials, production] = await Promise.all([
@@ -1420,17 +1548,28 @@ export default function App() {
         } as React.CSSProperties}>
           <button className="inspect__scrim" onClick={() => setSelected(null)} aria-label="Reshelve title" />
           {moreOpen ? (
-            <MoreDetails
-              item={selected}
-              details={mediaDetails}
-              production={productionDetails}
-              versions={playbackVersions}
-              similar={similarItems}
-              loading={moreLoading}
-              error={moreError}
-              onBack={() => setMoreOpen(false)}
-              onSelect={(item) => { setMoreOpen(false); setSelected(item); }}
-            />
+            selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
+              <AlbumMoreDetails
+                item={selected}
+                details={mediaDetails}
+                metadata={albumMetadata}
+                loading={moreLoading || albumMetadataLoading}
+                error={moreError || albumMetadataError}
+                onBack={() => setMoreOpen(false)}
+              />
+            ) : (
+              <MoreDetails
+                item={selected}
+                details={mediaDetails}
+                production={productionDetails}
+                versions={playbackVersions}
+                similar={similarItems}
+                loading={moreLoading}
+                error={moreError}
+                onBack={() => setMoreOpen(false)}
+                onSelect={(item) => { setMoreOpen(false); setSelected(item); }}
+              />
+            )
           ) : <>
             <div className="inspect__poster">
               {(selected.type === 'MusicAlbum' || selected.type === 'Audio') && <div className="album-reactive-field" aria-hidden="true">
@@ -1443,7 +1582,9 @@ export default function App() {
                   '--dot-delay': `${-index * .41}s`
                 } as React.CSSProperties} />)}
               </div>}
-              <Poster item={selected} />
+              {selected.type === 'MusicAlbum' || selected.type === 'Audio'
+                ? <AlbumArtwork item={selected} metadata={albumMetadata} />
+                : <Poster item={selected} />}
             </div>
             <article className="inspect__copy">
             <button className="reshelve back-button" aria-label="Reshelve title" onClick={() => setSelected(null)}><span aria-hidden="true">←</span><span>RESHELVE</span></button>
@@ -1482,7 +1623,10 @@ export default function App() {
                 )}
               </div>
             ) : selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
-              session ? <AlbumPlayer key={selected.id} album={selected} session={session} /> : null
+              session ? <div className="album-player-shell">
+                <AlbumPlayer key={selected.id} album={selected} session={session} />
+                <button className="more-trigger album-more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span aria-hidden="true">•••</span></button>
+              </div> : null
             ) : (
               <div className="inspect__actions">
                 <div className="playback-actions">
