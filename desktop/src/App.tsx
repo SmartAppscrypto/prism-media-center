@@ -1,13 +1,15 @@
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
-import type { AlbumMetadata, LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack } from './types';
+import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
 import { compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
 import { analyseFrequencyData, type AudioBands } from './audioReactive';
 import { getAlbumMetadata } from './musicbrainz';
+import { activeLyricIndex, lyricLineProgress, resolveTrackLyrics } from './lyrics';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -190,10 +192,16 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   const [trackIndex, setTrackIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [tracksOpen, setTracksOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
+  const [lyrics, setLyrics] = useState<TrackLyrics | null>(null);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricsStatus, setLyricsStatus] = useState('');
+  const lyricLineRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [status, setStatus] = useState('DEVELOPING TRACK LIST…');
   const currentTrack = tracks[trackIndex];
+  const activeLine = useMemo(() => lyrics?.synced ? activeLyricIndex(lyrics.lines, currentTime) : -1, [currentTime, lyrics]);
 
   const resetReactiveVisuals = useCallback(() => {
     window.cancelAnimationFrame(animationFrameRef.current ?? 0);
@@ -302,6 +310,29 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
     if (autoplayRef.current) void audio.play().catch(() => setStatus('PLAYBACK COULD NOT START'));
   }, [currentTrack]);
 
+  useEffect(() => {
+    setLyrics(null);
+    setLyricsStatus('');
+    if (!lyricsOpen || !currentTrack) return;
+    let cancelled = false;
+    setLyricsLoading(true);
+    resolveTrackLyrics(currentTrack, album, session).then((result) => {
+      if (cancelled) return;
+      setLyrics(result);
+      if (!result) setLyricsStatus('LYRICS ARE NOT AVAILABLE FOR THIS TRACK');
+    }).catch(() => {
+      if (!cancelled) setLyricsStatus('PRISM COULD NOT REACH THE LYRICS LIBRARY');
+    }).finally(() => {
+      if (!cancelled) setLyricsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [album, currentTrack, lyricsOpen, session]);
+
+  useEffect(() => {
+    if (activeLine < 0) return;
+    lyricLineRefs.current[activeLine]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeLine]);
+
   async function togglePlayback() {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
@@ -321,6 +352,15 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
     if (!tracks.length) return;
     autoplayRef.current = true;
     setTrackIndex((trackIndex + direction + tracks.length) % tracks.length);
+  }
+
+  function seekToLyric(index: number) {
+    const start = lyrics?.lines[index]?.startSeconds;
+    if (start === undefined || !audioRef.current) return;
+    audioRef.current.currentTime = start;
+    setCurrentTime(start);
+    autoplayRef.current = true;
+    void audioRef.current.play();
   }
 
   return (
@@ -358,7 +398,10 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
       {status && <p className="album-player__status">{status}</p>}
       {tracks.length > 0 && (
         <>
-          <button className="album-player__tracks-toggle" onClick={() => setTracksOpen((open) => !open)} aria-expanded={tracksOpen}>TRACKS · {tracks.length}</button>
+          <div className="album-player__modes">
+            <button className="album-player__tracks-toggle" onClick={() => { setTracksOpen((open) => !open); setLyricsOpen(false); }} aria-expanded={tracksOpen}>TRACKS · {tracks.length}</button>
+            <button className="album-player__lyrics-toggle" onClick={() => { setLyricsOpen(true); setTracksOpen(false); }} aria-expanded={lyricsOpen}>LYRICS</button>
+          </div>
           {tracksOpen && <div className="album-track-list" aria-label="Tracks">
             {tracks.map((track, index) => (
               <button key={track.id} className={index === trackIndex ? 'is-active' : ''} onClick={() => chooseTrack(index)}>
@@ -369,6 +412,43 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
             ))}
           </div>}
         </>
+      )}
+      {lyricsOpen && createPortal(
+        <section className="lyrics-stage" aria-label={`Lyrics for ${currentTrack?.title || album.title}`}>
+          <div className="lyrics-stage__backdrop" style={album.imageUrl ? { backgroundImage: `url("${album.imageUrl}")` } : undefined} />
+          <div className="lyrics-stage__header">
+            <button onClick={() => setLyricsOpen(false)} aria-label="Close lyrics"><span aria-hidden="true">←</span><span>BACK TO ALBUM</span></button>
+            <div><strong>{currentTrack?.title || album.title}</strong><small>{currentTrack?.artist || album.artist} · {lyrics?.source || 'PRISM LYRICS'}</small></div>
+          </div>
+          <div className={`lyrics-stage__lines ${lyrics?.synced ? 'is-synced' : 'is-plain'}`} aria-live="polite">
+            {lyricsLoading && <p className="lyrics-stage__message">FINDING THE WORDS…</p>}
+            {!lyricsLoading && lyrics?.instrumental && <p className="lyrics-stage__instrumental"><span>◇</span>INSTRUMENTAL</p>}
+            {!lyricsLoading && lyricsStatus && <p className="lyrics-stage__message">{lyricsStatus}</p>}
+            {!lyricsLoading && lyrics?.lines.map((line, index) => {
+              const progress = index === activeLine ? lyricLineProgress(lyrics.lines, index, currentTime, duration) : index < activeLine ? 1 : 0;
+              return <button
+                key={`${line.startSeconds ?? 'plain'}-${index}`}
+                ref={(element) => { lyricLineRefs.current[index] = element; }}
+                className={index === activeLine ? 'is-active' : index < activeLine ? 'is-past' : ''}
+                style={{ '--line-progress': progress } as React.CSSProperties}
+                onClick={() => seekToLyric(index)}
+                disabled={line.startSeconds === undefined}
+              ><span>{line.text || '♪'}</span></button>;
+            })}
+          </div>
+          <div className="lyrics-stage__transport">
+            <button onClick={() => moveTrack(-1)} aria-label="Previous track">‹</button>
+            <button className="lyrics-stage__play" onClick={() => void togglePlayback()} aria-label={playing ? 'Pause' : 'Play'}>{playing ? 'Ⅱ' : '▶'}</button>
+            <button onClick={() => moveTrack(1)} aria-label="Next track">›</button>
+            <span>{formatClock(currentTime)}</span>
+            <input type="range" min="0" max={duration || 0} step="0.1" value={Math.min(currentTime, duration || 0)} onChange={(event) => {
+              const nextTime = Number(event.target.value);
+              if (audioRef.current) audioRef.current.currentTime = nextTime;
+              setCurrentTime(nextTime);
+            }} aria-label="Track position" />
+            <span>{formatClock(duration)}</span>
+          </div>
+        </section>, document.body
       )}
     </section>
   );
@@ -1105,6 +1185,9 @@ export default function App() {
   const [productionScan, setProductionScan] = useState<ProductionScanProgress | null>(null);
   const [productionScanRunning, setProductionScanRunning] = useState(false);
   const [productionScanStatus, setProductionScanStatus] = useState('');
+  const [lyricsScan, setLyricsScan] = useState<LyricsScanProgress | null>(null);
+  const [lyricsScanRunning, setLyricsScanRunning] = useState(false);
+  const [lyricsScanStatus, setLyricsScanStatus] = useState('');
   const [seriesEpisodes, setSeriesEpisodes] = useState<MediaItem[]>([]);
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
@@ -1255,6 +1338,39 @@ export default function App() {
       setProductionScanStatus('The movie library could not be prepared for scanning.');
     } finally {
       setProductionScanRunning(false);
+    }
+  }
+
+  async function fetchMissingLyrics() {
+    if (!session) {
+      setLyricsScanStatus('Connect to PRISM Server before gathering lyrics.');
+      return;
+    }
+    setLyricsScanRunning(true);
+    setLyricsScan(null);
+    setLyricsScanStatus('PREPARING MUSIC LIBRARY…');
+    try {
+      const tracks = await getAllAudioTracks(session);
+      let found = 0;
+      let missing = 0;
+      for (let index = 0; index < tracks.length; index += 1) {
+        const track = tracks[index];
+        setLyricsScan({ current: index + 1, total: tracks.length, found, missing, title: track.title });
+        try {
+          const result = await resolveTrackLyrics(track, { title: track.albumTitle || 'Unknown Album', artist: track.artist }, session);
+          if (result) found += 1;
+          else missing += 1;
+        } catch {
+          missing += 1;
+        }
+        setLyricsScan({ current: index + 1, total: tracks.length, found, missing, title: track.title });
+        await new Promise((resolve) => window.setTimeout(resolve, 90));
+      }
+      setLyricsScanStatus(`COMPLETE · ${found} FOUND · ${missing} UNAVAILABLE`);
+    } catch {
+      setLyricsScanStatus('The music library could not be prepared for lyric matching.');
+    } finally {
+      setLyricsScanRunning(false);
     }
   }
 
@@ -1488,6 +1604,22 @@ export default function App() {
                   <label className="setting-select"><span>Size</span><select value={preferences.subtitleSize} onChange={(event) => updatePreferences({ subtitleSize: event.target.value as PrismPreferences['subtitleSize'] })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
                   <label className="setting-select"><span>Background</span><select value={preferences.subtitleBackground} onChange={(event) => updatePreferences({ subtitleBackground: event.target.value as PrismPreferences['subtitleBackground'] })}><option value="none">None</option><option value="soft">Soft</option><option value="strong">Strong</option></select></label>
                   <label className="setting-toggle"><span>English on foreign audio</span><input type="checkbox" checked={preferences.autoEnglishSubtitles} onChange={(event) => updatePreferences({ autoEnglishSubtitles: event.target.checked })} /></label>
+                </section>
+
+                <section className="settings-section">
+                  <h3>LYRICS</h3>
+                  <div className="production-scan-control lyrics-scan-control">
+                    <div><strong>Synchronized lyrics</strong><span>Time-matched words for your music library</span></div>
+                    <button onClick={() => void fetchMissingLyrics()} disabled={lyricsScanRunning}>{lyricsScanRunning ? 'GATHERING' : 'FETCH MISSING'}</button>
+                  </div>
+                  {lyricsScanRunning && lyricsScan && (
+                    <div className="production-progress lyrics-progress" aria-live="polite">
+                      <span style={{ width: `${Math.round((lyricsScan.current / Math.max(1, lyricsScan.total)) * 100)}%` }} />
+                      <small>{lyricsScan.current} / {lyricsScan.total} · {lyricsScan.title}</small>
+                    </div>
+                  )}
+                  {lyricsScanStatus && <p className="production-scan-status" role="status">{lyricsScanStatus}</p>}
+                  <p className="settings-hint">Checks PRISM Server first, then privately caches missing synchronized lyrics on this Mac. Instrumental tracks are recognized automatically.</p>
                 </section>
 
                 <section className="settings-section">

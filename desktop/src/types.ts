@@ -10,6 +10,7 @@ export type MediaItem = {
   seriesIds?: string[];
   title: string;
   artist?: string;
+  albumTitle?: string;
   year?: number;
   releaseDate?: string;
   trackNumber?: number;
@@ -17,6 +18,7 @@ export type MediaItem = {
   seasonNumber?: number;
   episodeNumber?: number;
   runtimeMinutes?: number;
+  runtimeSeconds?: number;
   overview?: string;
   imageUrl?: string;
   backdropUrl?: string;
@@ -128,5 +130,25 @@ export type ProductionScanProgress = {
   found: number;
   missing: number;
   skipped: number;
+  title: string;
+};
+
+export type LyricLine = {
+  text: string;
+  startSeconds?: number;
+};
+
+export type TrackLyrics = {
+  lines: LyricLine[];
+  synced: boolean;
+  instrumental: boolean;
+  source: 'PRISM Server' | 'LRCLIB';
+};
+
+export type LyricsScanProgress = {
+  current: number;
+  total: number;
+  found: number;
+  missing: number;
   title: string;
 };

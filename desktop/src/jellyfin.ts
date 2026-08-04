@@ -1,4 +1,4 @@
-import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, RemoteSubtitle } from './types';
+import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, RemoteSubtitle, TrackLyrics } from './types';
 
 const deviceIdKey = 'prism-device-id';
 
@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.13.4"`
+    `Version="0.13.5"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -160,12 +160,14 @@ function mapMediaItem(item: Record<string, unknown>, session: PrismSession, inde
       ? item.AlbumArtist
       : Array.isArray(item.Artists) && item.Artists.length
         ? item.Artists.map(String).join(', ')
-        : undefined,
+          : undefined,
+    albumTitle: typeof item.Album === 'string' ? item.Album : undefined,
     year: typeof item.ProductionYear === 'number' ? item.ProductionYear : undefined,
     releaseDate: typeof item.PremiereDate === 'string' ? item.PremiereDate : undefined,
     trackNumber: typeof item.IndexNumber === 'number' ? item.IndexNumber : undefined,
     discNumber: typeof item.ParentIndexNumber === 'number' ? item.ParentIndexNumber : undefined,
     runtimeMinutes: typeof item.RunTimeTicks === 'number' ? Math.round(item.RunTimeTicks / 600_000_000) : undefined,
+    runtimeSeconds: typeof item.RunTimeTicks === 'number' ? item.RunTimeTicks / 10_000_000 : undefined,
     overview: typeof item.Overview === 'string' ? item.Overview : undefined,
     type: (item.Type as MediaItem['type']) ?? 'Movie',
     hue: (index * 47 + 195) % 360,
@@ -195,6 +197,47 @@ export async function getAlbumTracks(album: MediaItem, session: PrismSession): P
     session.accessToken
   );
   return result.Items.map((track, index) => mapMediaItem(track, session, index));
+}
+
+export async function getAllAudioTracks(session: PrismSession): Promise<MediaItem[]> {
+  const params = new URLSearchParams({
+    userId: session.userId,
+    Recursive: 'true',
+    IncludeItemTypes: 'Audio',
+    Fields: 'AlbumArtist,Artists,IndexNumber,ParentIndexNumber,RunTimeTicks,ProviderIds',
+    SortBy: 'AlbumArtist,Album,ParentIndexNumber,IndexNumber,SortName',
+    SortOrder: 'Ascending'
+  });
+  const result = await api<{ Items: Array<Record<string, unknown>> }>(
+    session.serverUrl,
+    `/Users/${session.userId}/Items?${params}`,
+    {},
+    session.accessToken
+  );
+  return result.Items.map((track, index) => mapMediaItem(track, session, index));
+}
+
+export async function getServerLyrics(track: MediaItem, session: PrismSession): Promise<TrackLyrics | null> {
+  const response = await fetch(`${normalizedUrl(session.serverUrl)}/Audio/${encodeURIComponent(track.id)}/Lyrics`, {
+    headers: { Accept: 'application/json', Authorization: authorization(session.accessToken) }
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Server returned ${response.status}.`);
+  const result = await response.json() as {
+    Metadata?: { IsSynced?: boolean };
+    Lyrics?: Array<{ Text?: string; Start?: number }>;
+  };
+  const lines = (result.Lyrics ?? []).map((line) => ({
+    text: line.Text?.trim() ?? '',
+    startSeconds: typeof line.Start === 'number' ? line.Start / 10_000_000 : undefined
+  })).filter((line) => line.text);
+  if (!lines.length) return null;
+  return {
+    lines,
+    synced: Boolean(result.Metadata?.IsSynced && lines.some((line) => line.startSeconds !== undefined)),
+    instrumental: false,
+    source: 'PRISM Server'
+  };
 }
 
 export function audioPlaybackUrl(track: MediaItem, session: PrismSession) {
