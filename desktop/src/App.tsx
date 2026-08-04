@@ -2,10 +2,20 @@ import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPo
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, directPlaybackUrl, directPlayMimeType, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, signIn, subtitleUrl } from './jellyfin';
+import prismPlayAsset from './prismPlayAsset';
 import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, SubtitleTrack } from './types';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
+
+function PrismPlayMark() {
+  return (
+    <span className="play__mark" aria-hidden="true">
+      <span className="play__image-frame"><img src={prismPlayAsset} alt="" /></span>
+      <span className="play__glint" />
+    </span>
+  );
+}
 
 type SortMode = 'alphabetical' | 'random' | 'released';
 type PrismPreferences = {
@@ -1002,8 +1012,8 @@ export default function App() {
             <p className="overview">{selected.overview || 'No synopsis is available for this title yet.'}</p>
             {demo ? (
               <div className="inspect__actions">
-                <button className="play play--disabled" onClick={() => alert('Connect Prism to your Jellyfin server to play your own media.')}><span>▶</span> CONNECT TO PLAY</button>
-                <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span>•••</span> MORE</button>
+                <button className="play play--disabled" aria-label="Connect to play" onClick={() => alert('Connect Prism to your Jellyfin server to play your own media.')}><PrismPlayMark /><span className="play__label">CONNECT TO PLAY</span></button>
+                <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span aria-hidden="true">•••</span></button>
               </div>
             ) : selected.type === 'Series' ? (
               <div className="show-browser">
@@ -1032,11 +1042,11 @@ export default function App() {
                 )}
               </div>
             ) : selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
-              <button className="play play--disabled" disabled><span>♫</span> MUSIC PLAYBACK NEXT</button>
+              <button className="play play--disabled" disabled><span className="play__fallback">♫</span><span className="play__label">MUSIC PLAYBACK NEXT</span></button>
             ) : (
               <div className="inspect__actions">
                 <div className="playback-actions">
-                  <button className="play" onClick={() => setPlayingItem(selected)}><span>▶</span> PLAY</button>
+                  <button className="play" aria-label={`Play ${selected.title}`} onClick={() => setPlayingItem(selected)}><PrismPlayMark /><span className="play__label">PLAY</span></button>
                   {playbackVersions.length > 1 && (
                     <label className="version-picker">
                       <span>VERSION</span>
@@ -1048,7 +1058,7 @@ export default function App() {
                     </label>
                   )}
                 </div>
-                <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span>•••</span> MORE</button>
+                <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span aria-hidden="true">•••</span></button>
               </div>
             )}
             </article>

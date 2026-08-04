@@ -11,14 +11,17 @@ describe('Prism shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'EXPLORE THE DEMO' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open The Long Meridian' }));
     expect(screen.getByRole('heading', { name: 'The Long Meridian' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '▶ CONNECT TO PLAY' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect to play' })).toBeInTheDocument();
   });
 
   it('opens the full film page and links similar library titles', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'EXPLORE THE DEMO' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open The Long Meridian' }));
-    fireEvent.click(screen.getByRole('button', { name: 'More about The Long Meridian' }));
+    const moreButton = screen.getByRole('button', { name: 'More about The Long Meridian' });
+    expect(moreButton).toHaveTextContent('•••');
+    expect(moreButton).not.toHaveTextContent('MORE');
+    fireEvent.click(moreButton);
 
     const morePage = screen.getByRole('region', { name: 'More about The Long Meridian' });
     expect(morePage).toBeInTheDocument();
