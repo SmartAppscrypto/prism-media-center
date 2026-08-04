@@ -6,6 +6,7 @@ import prismPlayAsset from './prismPlayAsset';
 import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack } from './types';
 import { compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
+import { analyseFrequencyData, type AudioBands } from './audioReactive';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -150,15 +151,107 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
 }
 
 function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSession }) {
+  const playerRef = useRef<HTMLElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const autoplayRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const frequencyDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const animationFrameRef = useRef<number | undefined>(undefined);
+  const smoothedBandsRef = useRef<AudioBands>({ bass: 0, mid: 0, high: 0, energy: 0 });
+  const lastBeatRef = useRef(0);
   const [tracks, setTracks] = useState<MediaItem[]>([]);
   const [trackIndex, setTrackIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [tracksOpen, setTracksOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [status, setStatus] = useState('DEVELOPING TRACK LIST…');
   const currentTrack = tracks[trackIndex];
+
+  const resetReactiveVisuals = useCallback(() => {
+    window.cancelAnimationFrame(animationFrameRef.current ?? 0);
+    animationFrameRef.current = undefined;
+    const stage = playerRef.current?.closest<HTMLElement>('.inspect--album');
+    stage?.style.setProperty('--audio-bass', '0');
+    stage?.style.setProperty('--audio-mid', '0');
+    stage?.style.setProperty('--audio-high', '0');
+    stage?.style.setProperty('--audio-energy', '0');
+    playerRef.current?.querySelectorAll<HTMLElement>('.album-player__waveform i').forEach((bar) => { bar.style.transform = 'scaleY(.08)'; });
+  }, []);
+
+  const runAudioAnalysis = useCallback(async () => {
+    const audio = audioRef.current;
+    const player = playerRef.current;
+    if (!audio || !player) return;
+    if (!audioContextRef.current) {
+      const context = new AudioContext();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.58;
+      const source = context.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(context.destination);
+      audioContextRef.current = context;
+      analyserRef.current = analyser;
+      sourceRef.current = source;
+      frequencyDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+    }
+    await audioContextRef.current.resume();
+    const analyser = analyserRef.current;
+    const frequencyData = frequencyDataRef.current;
+    if (!analyser || !frequencyData) return;
+    window.cancelAnimationFrame(animationFrameRef.current ?? 0);
+
+    const draw = (now: number) => {
+      if (audio.paused || audio.ended) return;
+      analyser.getByteFrequencyData(frequencyData);
+      const measured = analyseFrequencyData(frequencyData);
+      const previous = smoothedBandsRef.current;
+      const smooth = (oldValue: number, nextValue: number, release = .76) => nextValue > oldValue ? oldValue * .35 + nextValue * .65 : oldValue * release + nextValue * (1 - release);
+      const bands = {
+        bass: smooth(previous.bass, measured.bass, .8),
+        mid: smooth(previous.mid, measured.mid),
+        high: smooth(previous.high, measured.high),
+        energy: smooth(previous.energy, measured.energy, .79)
+      };
+      smoothedBandsRef.current = bands;
+      const stage = player.closest<HTMLElement>('.inspect--album');
+      stage?.style.setProperty('--audio-bass', bands.bass.toFixed(3));
+      stage?.style.setProperty('--audio-mid', bands.mid.toFixed(3));
+      stage?.style.setProperty('--audio-high', bands.high.toFixed(3));
+      stage?.style.setProperty('--audio-energy', bands.energy.toFixed(3));
+
+      const bars = player.querySelectorAll<HTMLElement>('.album-player__waveform i');
+      bars.forEach((bar, index) => {
+        const bin = Math.min(frequencyData.length - 1, Math.floor((index / Math.max(1, bars.length - 1)) ** 1.65 * frequencyData.length * .72));
+        const level = (frequencyData[bin] ?? 0) / 255;
+        bar.style.transform = `scaleY(${Math.max(.045, level ** .82).toFixed(3)})`;
+        bar.style.opacity = String(.24 + level * .76);
+      });
+
+      const beatThreshold = Math.max(.34, previous.bass * 1.13, bands.energy * 1.48);
+      if (measured.bass > beatThreshold && now - lastBeatRef.current > 230) {
+        lastBeatRef.current = now;
+        stage?.querySelectorAll<HTMLElement>('.album-reactive-ring').forEach((ring, index) => {
+          ring.animate([
+            { transform: 'translate(-50%, -50%) scale(1)', opacity: String(.34 - index * .055) },
+            { transform: `translate(-50%, -50%) scale(${1.55 + index * .18})`, opacity: '0' }
+          ], { duration: 1050 + index * 130, delay: index * 35, easing: 'cubic-bezier(.12,.58,.22,1)' });
+        });
+      }
+      animationFrameRef.current = window.requestAnimationFrame(draw);
+    };
+    animationFrameRef.current = window.requestAnimationFrame(draw);
+  }, []);
+
+  useEffect(() => () => {
+    resetReactiveVisuals();
+    sourceRef.current?.disconnect();
+    analyserRef.current?.disconnect();
+    void audioContextRef.current?.close();
+  }, [resetReactiveVisuals]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,13 +299,14 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   }
 
   return (
-    <section className={`album-player ${playing ? 'album-player--playing' : ''}`} aria-label="Album player">
+    <section ref={playerRef} className={`album-player ${playing ? 'album-player--playing' : ''}`} aria-label="Album player">
       {currentTrack && <audio
         ref={audioRef}
+        crossOrigin="anonymous"
         src={audioPlaybackUrl(currentTrack, session)}
         preload="metadata"
-        onPlay={() => { setPlaying(true); setStatus(''); }}
-        onPause={() => setPlaying(false)}
+        onPlay={() => { setPlaying(true); setStatus(''); void runAudioAnalysis(); }}
+        onPause={() => { setPlaying(false); resetReactiveVisuals(); }}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
         onEnded={() => moveTrack(1)}
@@ -222,7 +316,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
         <button className="album-player__previous" onClick={() => moveTrack(-1)} disabled={!tracks.length} aria-label="Previous track">‹</button>
         <button className="album-player__toggle" onClick={() => void togglePlayback()} disabled={!currentTrack} aria-label={playing ? 'Pause' : 'Play'}>{playing ? 'Ⅱ' : '▶'}</button>
         <button className="album-player__next" onClick={() => moveTrack(1)} disabled={!tracks.length} aria-label="Next track">›</button>
-        <span className="album-player__now"><small>{playing ? 'NOW PLAYING' : 'READY'}</small><strong>{currentTrack?.title || album.title}</strong></span>
+        <span className="album-player__now"><small>{playing ? `NOW PLAYING · ${album.title}` : 'READY'}</small><strong>{currentTrack?.title || album.title}</strong></span>
       </div>
       <div className="album-player__timeline">
         <span>{formatClock(currentTime)}</span>
@@ -234,19 +328,22 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
         <span>{formatClock(duration)}</span>
       </div>
       <div className="album-player__waveform" aria-hidden="true">
-        {Array.from({ length: 64 }, (_, index) => <i key={index} style={{ '--bar': `${22 + ((index * 37) % 76)}%`, '--delay': `${(index % 13) * -0.07}s` } as React.CSSProperties} />)}
+        {Array.from({ length: 96 }, (_, index) => <i key={index} style={{ '--bar': `${18 + ((index * 37) % 80)}%` } as React.CSSProperties} />)}
       </div>
       {status && <p className="album-player__status">{status}</p>}
       {tracks.length > 0 && (
-        <div className="album-track-list" aria-label="Tracks">
-          {tracks.map((track, index) => (
-            <button key={track.id} className={index === trackIndex ? 'is-active' : ''} onClick={() => chooseTrack(index)}>
-              <span>{String(track.trackNumber ?? index + 1).padStart(2, '0')}</span>
-              <strong>{track.title}</strong>
-              <small>{formatRuntime(track.runtimeMinutes)}</small>
-            </button>
-          ))}
-        </div>
+        <>
+          <button className="album-player__tracks-toggle" onClick={() => setTracksOpen((open) => !open)} aria-expanded={tracksOpen}>TRACKS · {tracks.length}</button>
+          {tracksOpen && <div className="album-track-list" aria-label="Tracks">
+            {tracks.map((track, index) => (
+              <button key={track.id} className={index === trackIndex ? 'is-active' : ''} onClick={() => chooseTrack(index)}>
+                <span>{String(track.trackNumber ?? index + 1).padStart(2, '0')}</span>
+                <strong>{track.title}</strong>
+                <small>{formatRuntime(track.runtimeMinutes)}</small>
+              </button>
+            ))}
+          </div>}
+        </>
       )}
     </section>
   );
@@ -1335,7 +1432,19 @@ export default function App() {
               onSelect={(item) => { setMoreOpen(false); setSelected(item); }}
             />
           ) : <>
-            <div className="inspect__poster"><Poster item={selected} /></div>
+            <div className="inspect__poster">
+              {(selected.type === 'MusicAlbum' || selected.type === 'Audio') && <div className="album-reactive-field" aria-hidden="true">
+                {Array.from({ length: 4 }, (_, index) => <i className="album-reactive-ring" key={`ring-${index}`} />)}
+                {Array.from({ length: 54 }, (_, index) => <i className="album-orbit-dot" key={`dot-${index}`} style={{
+                  '--dot-angle': `${(index * 137.5) % 360}deg`,
+                  '--dot-radius': `${55 + (index % 9) * 8}%`,
+                  '--dot-size': `${1 + (index % 4) * .65}px`,
+                  '--dot-speed': `${18 + (index % 11) * 2.7}s`,
+                  '--dot-delay': `${-index * .41}s`
+                } as React.CSSProperties} />)}
+              </div>}
+              <Poster item={selected} />
+            </div>
             <article className="inspect__copy">
             <button className="reshelve back-button" aria-label="Reshelve title" onClick={() => setSelected(null)}><span aria-hidden="true">←</span><span>RESHELVE</span></button>
             <p className="eyebrow">{[selected.artist, selected.year, formatRuntime(selected.runtimeMinutes), selected.type.toUpperCase()].filter(Boolean).join(' · ')}</p>
@@ -1373,7 +1482,7 @@ export default function App() {
                 )}
               </div>
             ) : selected.type === 'MusicAlbum' || selected.type === 'Audio' ? (
-              session ? <AlbumPlayer album={selected} session={session} /> : null
+              session ? <AlbumPlayer key={selected.id} album={selected} session={session} /> : null
             ) : (
               <div className="inspect__actions">
                 <div className="playback-actions">
