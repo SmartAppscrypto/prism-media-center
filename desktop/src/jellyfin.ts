@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.13.6"`
+    `Version="0.13.8"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -232,9 +232,11 @@ export async function getServerLyrics(track: MediaItem, session: PrismSession): 
     startSeconds: typeof line.Start === 'number' ? line.Start / 10_000_000 : undefined
   })).filter((line) => line.text);
   if (!lines.length) return null;
+  const timedLines = lines.filter((line) => line.startSeconds !== undefined);
+  const hasProgressingTimestamps = timedLines.some((line, index) => index > 0 && (line.startSeconds ?? 0) > (timedLines[index - 1].startSeconds ?? 0));
   return {
     lines,
-    synced: Boolean(result.Metadata?.IsSynced && lines.some((line) => line.startSeconds !== undefined)),
+    synced: Boolean(result.Metadata?.IsSynced || hasProgressingTimestamps),
     instrumental: false,
     source: 'PRISM Server'
   };

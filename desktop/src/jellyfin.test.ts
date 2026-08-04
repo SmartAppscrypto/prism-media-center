@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes, searchRemoteSubtitles } from './jellyfin';
+import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes, getServerLyrics, searchRemoteSubtitles } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -121,6 +121,26 @@ describe('playback selection', () => {
 
     expect(tracks[0]).toMatchObject({ title: 'So What', artist: 'Miles Davis', trackNumber: 1, discNumber: 1, runtimeMinutes: 9 });
     expect(audioPlaybackUrl(tracks[0], session)).toBe('http://server/Audio/track-1/stream?Static=true&api_key=a%20token');
+  });
+
+  it('recognizes progressing lyric timestamps even when server metadata omits the synchronized flag', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        Metadata: { IsSynced: false },
+        Lyrics: [
+          { Text: 'First line', Start: 50_000_000 },
+          { Text: 'Second line', Start: 120_000_000 }
+        ]
+      })
+    }));
+    const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' } as PrismSession;
+
+    await expect(getServerLyrics({ id: 'track' } as MediaItem, session)).resolves.toMatchObject({
+      synced: true,
+      lines: [{ text: 'First line', startSeconds: 5 }, { text: 'Second line', startSeconds: 12 }]
+    });
   });
 
   it('returns provider ids used for private TMDb enrichment', async () => {

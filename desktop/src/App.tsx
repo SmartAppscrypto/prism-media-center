@@ -9,7 +9,7 @@ import { compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
 import { analyseFrequencyData, type AudioBands } from './audioReactive';
 import { getAlbumMetadata } from './musicbrainz';
-import { activeLyricIndex, resolveTrackLyrics } from './lyrics';
+import { activeLyricIndex, estimatedLyricIndex, estimatedLyricStart, resolveTrackLyrics } from './lyrics';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
@@ -199,17 +199,17 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricsStatus, setLyricsStatus] = useState('');
   const lyricLineRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const compactLineRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [status, setStatus] = useState('DEVELOPING TRACK LIST…');
   const currentTrack = tracks[trackIndex];
-  const activeLine = useMemo(() => lyrics?.synced ? activeLyricIndex(lyrics.lines, currentTime) : -1, [currentTime, lyrics]);
-  const compactLyricLines = useMemo(() => {
-    if (!lyrics?.lines.length) return [];
-    if (!lyrics.synced) return lyrics.lines.slice(0, 4).map((line, index) => ({ line, index }));
-    const start = Math.max(0, Math.min(lyrics.lines.length - 4, activeLine < 0 ? 0 : activeLine - 1));
-    return lyrics.lines.slice(start, start + 4).map((line, offset) => ({ line, index: start + offset }));
-  }, [activeLine, lyrics]);
+  const activeLine = useMemo(() => {
+    if (!lyrics) return -1;
+    return lyrics.synced
+      ? activeLyricIndex(lyrics.lines, currentTime)
+      : estimatedLyricIndex(lyrics.lines, currentTime, duration);
+  }, [currentTime, duration, lyrics]);
 
   const resetReactiveVisuals = useCallback(() => {
     window.cancelAnimationFrame(animationFrameRef.current ?? 0);
@@ -342,6 +342,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   useEffect(() => {
     if (activeLine < 0) return;
     lyricLineRefs.current[activeLine]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    compactLineRefs.current[activeLine]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [activeLine]);
 
   async function togglePlayback() {
@@ -366,7 +367,8 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   }
 
   function seekToLyric(index: number) {
-    const start = lyrics?.lines[index]?.startSeconds;
+    const start = lyrics?.lines[index]?.startSeconds
+      ?? estimatedLyricStart(index, lyrics?.lines.length ?? 0, duration);
     if (start === undefined || !audioRef.current) return;
     audioRef.current.currentTime = start;
     setCurrentTime(start);
@@ -435,11 +437,12 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
               {lyricsLoading && <p>FINDING THE WORDS…</p>}
               {!lyricsLoading && lyrics?.instrumental && <p>◇ &nbsp; INSTRUMENTAL</p>}
               {!lyricsLoading && lyricsStatus && <p>{lyricsStatus}</p>}
-              {!lyricsLoading && compactLyricLines.map(({ line, index }) => <button
+              {!lyricsLoading && (lyrics?.lines ?? []).map((line, index) => <button
                 key={`${line.startSeconds ?? 'plain'}-${index}`}
+                ref={(element) => { compactLineRefs.current[index] = element; }}
                 className={index === activeLine ? 'is-active' : index < activeLine ? 'is-past' : ''}
                 onClick={() => seekToLyric(index)}
-                disabled={line.startSeconds === undefined}
+                disabled={line.startSeconds === undefined && duration <= 0}
               >{line.text}</button>)}
             </div>
           </section>}
@@ -462,7 +465,7 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
                 ref={(element) => { lyricLineRefs.current[index] = element; }}
                 className={index === activeLine ? 'is-active' : index < activeLine ? 'is-past' : ''}
                 onClick={() => seekToLyric(index)}
-                disabled={line.startSeconds === undefined}
+                disabled={line.startSeconds === undefined && duration <= 0}
               ><span>{line.text || '♪'}</span></button>;
             })}
           </div>
@@ -1752,7 +1755,7 @@ export default function App() {
             <button className="reshelve back-button" aria-label="Reshelve title" onClick={() => setSelected(null)}><span aria-hidden="true">←</span><span>RESHELVE</span></button>
             <p className="eyebrow">{[selected.artist, selected.year, formatRuntime(selected.runtimeMinutes), selected.type.toUpperCase()].filter(Boolean).join(' · ')}</p>
             <h2>{selected.title}</h2>
-            <p className="overview">{selected.overview || 'No synopsis is available for this title yet.'}</p>
+            {selected.overview && <p className="overview">{selected.overview}</p>}
             {demo ? (
               <div className="inspect__actions">
                 <button className="play play--disabled" aria-label="Connect to play" onClick={() => alert('Connect Prism to your Jellyfin server to play your own media.')}><PrismPlayMark /><span className="play__label">CONNECT TO PLAY</span></button>

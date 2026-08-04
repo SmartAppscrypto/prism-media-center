@@ -41,6 +41,24 @@ export function activeLyricIndex(lines: LyricLine[], time: number) {
   return active;
 }
 
+export function estimatedLyricStart(index: number, lineCount: number, duration: number) {
+  if (lineCount <= 0 || duration <= 0) return undefined;
+  const firstLine = Math.min(12, duration * .06);
+  const finalLine = Math.max(firstLine, duration - Math.min(10, duration * .04));
+  return lineCount === 1 ? firstLine : firstLine + (index / (lineCount - 1)) * (finalLine - firstLine);
+}
+
+export function estimatedLyricIndex(lines: LyricLine[], time: number, duration: number) {
+  if (!lines.length || duration <= 0) return -1;
+  let active = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const start = estimatedLyricStart(index, lines.length, duration);
+    if (start === undefined || start > time + .08) break;
+    active = index;
+  }
+  return active;
+}
+
 export function lyricLineProgress(lines: LyricLine[], index: number, time: number, duration: number) {
   const start = lines[index]?.startSeconds;
   if (start === undefined) return 0;
@@ -134,16 +152,26 @@ async function fetchRemoteLyrics(track: MediaItem, album: Pick<MediaItem, 'title
 
 export async function resolveTrackLyrics(track: MediaItem, album: Pick<MediaItem, 'title' | 'artist'>, session: PrismSession, forceRefresh = false): Promise<TrackLyrics | null> {
   const key = cacheKey(track, session);
+  let plainFallback: TrackLyrics | null = null;
   if (!forceRefresh) {
     const cached = await readCache(key);
-    if (cached) return cached;
+    if (cached?.synced || cached?.instrumental) return cached;
+    plainFallback = cached;
     const serverLyrics = await getServerLyrics(track, session);
-    if (serverLyrics) {
+    if (serverLyrics?.synced || serverLyrics?.instrumental) {
       await writeCache(key, serverLyrics);
       return serverLyrics;
     }
+    plainFallback ??= serverLyrics;
   }
-  const remote = await fetchRemoteLyrics(track, album);
-  if (remote) await writeCache(key, remote);
-  return remote;
+  try {
+    const remote = await fetchRemoteLyrics(track, album);
+    if (remote) {
+      await writeCache(key, remote);
+      return remote;
+    }
+  } catch (error) {
+    if (!plainFallback) throw error;
+  }
+  return plainFallback;
 }
