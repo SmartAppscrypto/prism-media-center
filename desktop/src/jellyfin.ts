@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.13.0"`
+    `Version="0.13.1"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -84,7 +84,7 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
     userId: session.userId,
     Recursive: 'true',
     IncludeItemTypes: itemTypes(view?.collectionType),
-    Fields: 'Overview,PrimaryImageAspectRatio,ProductionYear,PremiereDate,RunTimeTicks,BackdropImageTags,ProviderIds',
+    Fields: 'Overview,PrimaryImageAspectRatio,ProductionYear,PremiereDate,RunTimeTicks,BackdropImageTags,ProviderIds,AlbumArtist,Artists',
     ImageTypeLimit: '1',
     EnableImageTypes: 'Primary,Backdrop',
     SortBy: 'SortName',
@@ -106,6 +106,11 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
       id,
       seriesIds: item.Type === 'Series' ? [id] : undefined,
       title: String(item.Name ?? 'Untitled'),
+      artist: typeof item.AlbumArtist === 'string' && item.AlbumArtist.trim()
+        ? item.AlbumArtist
+        : Array.isArray(item.Artists) && item.Artists.length
+          ? item.Artists.map(String).join(', ')
+          : undefined,
       year: typeof item.ProductionYear === 'number' ? item.ProductionYear : undefined,
       releaseDate: typeof item.PremiereDate === 'string' ? item.PremiereDate : undefined,
       runtimeMinutes: typeof item.RunTimeTicks === 'number' ? Math.round(item.RunTimeTicks / 600_000_000) : undefined,

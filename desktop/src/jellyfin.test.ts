@@ -82,6 +82,27 @@ describe('playback selection', () => {
     expect(shows[0].seriesIds).toEqual(['fallout-s1', 'fallout-s2']);
   });
 
+  it('maps music libraries to albums with artist information', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ Items: [{
+        Id: 'album',
+        Name: 'Kind of Blue',
+        Type: 'MusicAlbum',
+        AlbumArtist: 'Miles Davis',
+        ProductionYear: 1959
+      }] })
+    }));
+
+    const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' } as PrismSession;
+    const albums = await getLibrary(session, { id: 'music', name: 'Music', collectionType: 'music' });
+
+    expect(albums).toHaveLength(1);
+    expect(albums[0]).toMatchObject({ title: 'Kind of Blue', artist: 'Miles Davis', type: 'MusicAlbum', year: 1959 });
+    const requestUrl = String(vi.mocked(fetch).mock.calls[0][0]);
+    expect(new URL(requestUrl).searchParams.get('IncludeItemTypes')).toBe('MusicAlbum');
+  });
+
   it('returns provider ids used for private TMDb enrichment', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

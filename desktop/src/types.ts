@@ -9,6 +9,7 @@ export type MediaItem = {
   id: string;
   seriesIds?: string[];
   title: string;
+  artist?: string;
   year?: number;
   releaseDate?: string;
   seasonNumber?: number;

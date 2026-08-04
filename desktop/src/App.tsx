@@ -124,20 +124,28 @@ function formatCodec(value?: string) {
 }
 
 function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaItem) => void }) {
+  const isAlbum = item.type === 'MusicAlbum' || item.type === 'Audio';
   const style = item.imageUrl
     ? { backgroundImage: `url("${item.imageUrl}")` }
     : { '--hue': item.hue } as React.CSSProperties;
   const artwork = (
     <>
       {!item.imageUrl && <span className="poster__geometry" />}
-      {!item.imageUrl && <span className="poster__title">{item.title}</span>}
-      <span className="poster__year">{item.year}</span>
+      {!item.imageUrl && !isAlbum && <span className="poster__title">{item.title}</span>}
+      {!isAlbum && <span className="poster__year">{item.year}</span>}
+      {isAlbum && (
+        <span className="album-caption">
+          <strong>{item.title}</strong>
+          <small>{item.artist || item.year || 'ALBUM'}</small>
+        </span>
+      )}
     </>
   );
+  const className = `poster ${isAlbum ? 'poster--album' : ''}`;
   return onSelect ? (
-    <button className="poster" data-letter={titleInitial(item.title)} style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}`}>{artwork}</button>
+    <button className={className} data-letter={titleInitial(item.title)} style={style} onClick={() => onSelect(item)} aria-label={`Open ${item.title}${item.artist ? ` by ${item.artist}` : ''}`}>{artwork}</button>
   ) : (
-    <div className="poster" style={style} aria-label={`${item.title} poster`}>{artwork}</div>
+    <div className={className} style={style} aria-label={`${item.title} ${isAlbum ? 'album cover' : 'poster'}`}>{artwork}</div>
   );
 }
 
@@ -1062,9 +1070,10 @@ export default function App() {
 
   const seasons = [...new Set(seriesEpisodes.map((episode) => episode.seasonNumber ?? 0))];
   const visibleEpisodes = seriesEpisodes.filter((episode) => (episode.seasonNumber ?? 0) === selectedSeason);
+  const isMusicLibrary = activeView?.collectionType === 'music' || activeView?.name.toLowerCase() === 'music';
 
   return (
-    <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library library--grid-${preferences.gridDensity} ${preferences.reducedMotion ? 'library--reduced-motion' : ''} ${selected ? 'library--inspect' : ''}`}>
+    <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library library--grid-${preferences.gridDensity} ${isMusicLibrary ? 'library--music' : ''} ${preferences.reducedMotion ? 'library--reduced-motion' : ''} ${selected ? 'library--inspect' : ''}`}>
       <header {...windowDragProps()}>
         <div className="header__brand">
           {!demo && <button className="menu-trigger" onClick={() => { setDrawerPage('libraries'); setMenuOpen(true); }} aria-label="Open library menu"><span /><span /><span /></button>}
@@ -1076,7 +1085,7 @@ export default function App() {
               <button key={letter} disabled={!availableLetters.has(letter)} onClick={() => focusFirstPosterForLetter(letter)} aria-label={`Jump to ${letter}`}>{letter}</button>
             ))}
           </nav>
-          <span className="title-count">{demo ? 'DEMO LIBRARY' : `${visibleItems.length} TITLES`}</span>
+          <span className="title-count">{demo ? 'DEMO LIBRARY' : `${visibleItems.length} ${isMusicLibrary ? 'ALBUMS' : 'TITLES'}`}</span>
           <label className="sort-control">
             <span>SORT</span>
             <select
@@ -1200,7 +1209,7 @@ export default function App() {
       {libraryError && <div className="library-error">{libraryError} <button onClick={disconnect}>Reconnect</button></div>}
       {!libraryError && (libraryLoading || !visibleItems.length) && <div className="loading">DEVELOPING {activeView?.name?.toUpperCase() || 'YOUR LIBRARY'}…</div>}
 
-      <section ref={wallRef} className={`wall ${scrollbarVisible ? 'wall--scrollbar-visible' : ''}`} aria-label="Media library" onKeyDown={navigatePosterGrid}>
+      <section ref={wallRef} className={`wall ${scrollbarVisible ? 'wall--scrollbar-visible' : ''}`} aria-label={isMusicLibrary ? 'Music albums' : 'Media library'} onKeyDown={navigatePosterGrid}>
         {sortedItems.map((item) => <Poster key={item.id} item={item} onSelect={setSelected} />)}
       </section>
 
