@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('prismMetadata', {
   clearTmdbToken: () => ipcRenderer.invoke('prism-tmdb-clear'),
   getTmdbMovie: (identifiers) => ipcRenderer.invoke('prism-tmdb-movie', identifiers),
   getProduction: (item) => ipcRenderer.invoke('prism-production-get', item),
+  findProductionMatches: (query) => ipcRenderer.invoke('prism-production-find', query),
   scanProduction: (items) => ipcRenderer.invoke('prism-production-scan', items),
   onProductionProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);

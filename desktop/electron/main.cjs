@@ -10,6 +10,10 @@ const windowDrags = new Map();
 const tmdbCacheMaxAge = 30 * 24 * 60 * 60 * 1000;
 const productionMissMaxAge = 30 * 24 * 60 * 60 * 1000;
 const productionLookups = new Map();
+const productionFacetFields = new Set([
+  'acquisition', 'cameras', 'lenses', 'lensManufacturers', 'cameraAperture', 'filmStock', 'filmGauge',
+  'captureResolution', 'captureFormats', 'projectResolution', 'frameRate', 'finishingProcess', 'aspectRatio', 'cinematographers'
+]);
 let productionCache;
 let productionScanRunning = false;
 let nativePlayer;
@@ -148,6 +152,18 @@ ipcMain.handle('prism-tmdb-movie', async (_event, identifiers) => {
 ipcMain.handle('prism-production-get', async (_event, item) => {
   try { return await lookupProduction(item, Boolean(item?.scrapeIfMissing)); }
   catch { return null; }
+});
+
+ipcMain.handle('prism-production-find', async (_event, query) => {
+  const field = typeof query?.field === 'string' && productionFacetFields.has(query.field) ? query.field : '';
+  const value = typeof query?.value === 'string' ? query.value.trim().toLocaleLowerCase() : '';
+  if (!field || !value || !Array.isArray(query?.items)) return [];
+  const cache = await getProductionCache();
+  return query.items.slice(0, 5000).filter((item) => {
+    const data = cache[productionKey(item)]?.data;
+    return typeof item?.id === 'string' && Array.isArray(data?.[field])
+      && data[field].some((candidate) => typeof candidate === 'string' && candidate.trim().toLocaleLowerCase() === value);
+  }).map((item) => item.id);
 });
 
 ipcMain.handle('prism-production-scan', async (event, rawItems) => {

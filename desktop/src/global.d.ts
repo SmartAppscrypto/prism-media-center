@@ -1,4 +1,4 @@
-import type { ProductionDetails, ProductionScanProgress } from './types';
+import type { ProductionDetails, ProductionFacetKey, ProductionScanProgress } from './types';
 
 export {};
 
@@ -15,6 +15,7 @@ declare global {
       clearTmdbToken: () => Promise<boolean>;
       getTmdbMovie: (identifiers: { tmdbId?: string; imdbId?: string }) => Promise<{ budget?: number; revenue?: number; source: 'TMDb' } | null>;
       getProduction: (item: { title: string; year?: number; scrapeIfMissing?: boolean }) => Promise<ProductionDetails | null>;
+      findProductionMatches: (query: { items: Array<{ id: string; title: string; year?: number }>; field: ProductionFacetKey; value: string }) => Promise<string[]>;
       scanProduction: (items: Array<{ title: string; year?: number }>) => Promise<{ ok: boolean; total?: number; found?: number; missing?: number; skipped?: number; error?: string }>;
       onProductionProgress: (callback: (progress: ProductionScanProgress) => void) => () => void;
     };

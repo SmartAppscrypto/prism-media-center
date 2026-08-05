@@ -4,7 +4,7 @@ import Hls from 'hls.js';
 import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
-import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, MediaPerson, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
+import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, MediaPerson, PlaybackDetails, PrismSession, ProductionDetails, ProductionFacetKey, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
 import { compareArtistsThenTitles, compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
 import { analyseFrequencyData, type AudioBands } from './audioReactive';
@@ -521,13 +521,15 @@ function PersonFilmography({
   onBack: () => void;
   onSelect: (item: MediaItem) => void;
 }) {
+  const isActor = person.type === 'Actor';
+  const creditLabel = person.role || person.type || 'Crew';
   return (
     <section className="more-page person-page" aria-label={`${person.name} films in your library`}>
       <div
         className="more-page__hero person-page__hero"
         style={person.imageUrl ? { '--person-image': `url("${person.imageUrl}")` } as React.CSSProperties : undefined}
       >
-        <button className="reshelve back-button" aria-label={`Back to ${originTitle} cast`} onClick={onBack}><span aria-hidden="true">←</span><span>BACK TO CAST</span></button>
+        <button className="reshelve back-button" aria-label={`Back to ${originTitle} ${isActor ? 'cast' : 'crew'}`} onClick={onBack}><span aria-hidden="true">←</span><span>BACK TO {isActor ? 'CAST' : 'CREW'}</span></button>
         <p className="eyebrow">IN YOUR LIBRARY</p>
         <h2>{person.name}</h2>
         <p className="person-page__count">{loading ? 'DEVELOPING FILMOGRAPHY…' : `${films.length} ${films.length === 1 ? 'FILM' : 'FILMS'}`}</p>
@@ -537,10 +539,53 @@ function PersonFilmography({
       {!loading && !error && (
         <div className="more-page__body person-page__body">
           <section className="more-section">
-            <p className="eyebrow">FEATURING {person.name.toUpperCase()}</p>
+            <p className="eyebrow">{isActor ? 'FEATURING' : creditLabel.toUpperCase()} · {person.name.toUpperCase()}</p>
             {films.length ? <div className="person-film-grid">{films.map((film) => (
               <Poster key={film.id} item={film} onSelect={onSelect} />
-            ))}</div> : <p className="more-page__empty">No films featuring {person.name} were found in your current library.</p>}
+            ))}</div> : <p className="more-page__empty">No films connected to {person.name} were found in your current library.</p>}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProductionFilmography({
+  fieldLabel,
+  value,
+  originTitle,
+  films,
+  loading,
+  error,
+  onBack,
+  onSelect
+}: {
+  fieldLabel: string;
+  value: string;
+  originTitle: string;
+  films: MediaItem[];
+  loading: boolean;
+  error: string;
+  onBack: () => void;
+  onSelect: (item: MediaItem) => void;
+}) {
+  return (
+    <section className="more-page connection-page" aria-label={`${value} films in your library`}>
+      <div className="more-page__hero connection-page__hero">
+        <button className="reshelve back-button" aria-label={`Back to ${originTitle} production details`} onClick={onBack}><span aria-hidden="true">←</span><span>BACK TO DETAILS</span></button>
+        <p className="eyebrow">PRODUCTION CONNECTION</p>
+        <h2>{value}</h2>
+        <p className="person-page__count">{fieldLabel} · {loading ? 'SEARCHING…' : `${films.length} ${films.length === 1 ? 'FILM' : 'FILMS'}`}</p>
+      </div>
+      {loading && <p className="more-page__status">SEARCHING PRODUCTION RECORDS…</p>}
+      {error && <p className="more-page__status more-page__status--error">{error}</p>}
+      {!loading && !error && (
+        <div className="more-page__body person-page__body">
+          <section className="more-section">
+            <p className="eyebrow">{fieldLabel} · {value}</p>
+            {films.length ? <div className="person-film-grid">{films.map((film) => (
+              <Poster key={film.id} item={film} onSelect={onSelect} />
+            ))}</div> : <p className="more-page__empty">No other cached production records in your library use {value}. Run “Scan Missing” in Settings to expand these connections.</p>}
           </section>
         </div>
       )}
@@ -555,6 +600,7 @@ function MoreDetails({
   versions,
   similar,
   session,
+  libraryMovies,
   loading,
   error,
   onBack,
@@ -566,6 +612,7 @@ function MoreDetails({
   versions: PlaybackDetails[];
   similar: MediaItem[];
   session: PrismSession | null;
+  libraryMovies: MediaItem[];
   loading: boolean;
   error: string;
   onBack: () => void;
@@ -576,18 +623,27 @@ function MoreDetails({
   const [personLoading, setPersonLoading] = useState(false);
   const [personError, setPersonError] = useState('');
   const personRequestRef = useRef(0);
+  const [selectedFacet, setSelectedFacet] = useState<{ field: ProductionFacetKey; label: string; value: string } | null>(null);
+  const [facetFilms, setFacetFilms] = useState<MediaItem[]>([]);
+  const [facetLoading, setFacetLoading] = useState(false);
+  const [facetError, setFacetError] = useState('');
+  const facetRequestRef = useRef(0);
   const cast = details?.people.filter((person) => person.type === 'Actor') ?? [];
   const crew = details?.people.filter((person) => person.type !== 'Actor') ?? [];
 
   useEffect(() => {
     personRequestRef.current += 1;
+    facetRequestRef.current += 1;
     setSelectedPerson(null);
+    setSelectedFacet(null);
     setPersonFilms([]);
+    setFacetFilms([]);
     setPersonError('');
+    setFacetError('');
   }, [item.id]);
 
   async function openPerson(person: MediaPerson) {
-    if (!person.id || !session) return;
+    if (!session) return;
     playUiTone('panel');
     setSelectedPerson(person);
     setPersonFilms([]);
@@ -604,6 +660,31 @@ function MoreDetails({
     }
   }
 
+  async function openProductionFacet(field: ProductionFacetKey, label: string, value: string) {
+    playUiTone('panel');
+    setSelectedFacet({ field, label, value });
+    setFacetFilms([]);
+    setFacetError('');
+    setFacetLoading(true);
+    const request = ++facetRequestRef.current;
+    try {
+      if (!window.prismMetadata) throw new Error('Production connections are available in the installed Prism app.');
+      const candidates = libraryMovies.filter((movie) => movie.type === 'Movie' && movie.year);
+      const ids = await window.prismMetadata.findProductionMatches({
+        items: candidates.map((movie) => ({ id: movie.id, title: movie.title, year: movie.year })),
+        field,
+        value
+      });
+      const matches = new Set(ids);
+      const films = candidates.filter((movie) => matches.has(movie.id)).sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || compareTitles(a.title, b.title));
+      if (request === facetRequestRef.current) setFacetFilms(films);
+    } catch (reason) {
+      if (request === facetRequestRef.current) setFacetError(reason instanceof Error ? reason.message : 'PRISM could not search the production records.');
+    } finally {
+      if (request === facetRequestRef.current) setFacetLoading(false);
+    }
+  }
+
   if (selectedPerson) return <PersonFilmography
     person={selectedPerson}
     originTitle={item.title}
@@ -613,6 +694,34 @@ function MoreDetails({
     onBack={() => { personRequestRef.current += 1; setSelectedPerson(null); }}
     onSelect={onSelect}
   />;
+
+  if (selectedFacet) return <ProductionFilmography
+    fieldLabel={selectedFacet.label}
+    value={selectedFacet.value}
+    originTitle={item.title}
+    films={facetFilms}
+    loading={facetLoading}
+    error={facetError}
+    onBack={() => { facetRequestRef.current += 1; setSelectedFacet(null); }}
+    onSelect={onSelect}
+  />;
+
+  const productionGroups: Array<{ label: string; field: ProductionFacetKey; values: string[] }> = production ? [
+    { label: 'CINEMATOGRAPHY', field: 'cinematographers', values: production.cinematographers },
+    { label: 'CAMERAS', field: 'cameras', values: production.cameras },
+    { label: 'LENSES', field: 'lenses', values: production.lenses },
+    { label: 'LENS MAKERS', field: 'lensManufacturers', values: production.lensManufacturers },
+    { label: 'ACQUISITION', field: 'acquisition', values: production.acquisition },
+    { label: 'CAMERA APERTURE', field: 'cameraAperture', values: production.cameraAperture },
+    { label: 'FILM STOCK', field: 'filmStock', values: production.filmStock },
+    { label: 'FILM GAUGE', field: 'filmGauge', values: production.filmGauge },
+    { label: 'CAPTURE RESOLUTION', field: 'captureResolution', values: production.captureResolution },
+    { label: 'CAPTURE FORMAT', field: 'captureFormats', values: production.captureFormats },
+    { label: 'PROJECT FORMAT', field: 'projectResolution', values: production.projectResolution },
+    { label: 'FRAME RATE', field: 'frameRate', values: production.frameRate },
+    { label: 'FINISHING', field: 'finishingProcess', values: production.finishingProcess },
+    { label: 'NATIVE ASPECT RATIO', field: 'aspectRatio', values: production.aspectRatio }
+  ] : [];
 
   return (
     <section className="more-page" aria-label={`More about ${item.title}`}>
@@ -637,7 +746,7 @@ function MoreDetails({
           <section className="more-section">
             <p className="eyebrow">CAST</p>
             {cast.length ? <div className="people-grid">{cast.map((person, index) => (
-              <button className="person-card" key={`${person.id || person.name}-${index}`} onClick={() => void openPerson(person)} disabled={!person.id || !session} aria-label={`Show films featuring ${person.name}`}>
+              <button className="person-card" key={`${person.id || person.name}-${index}`} onClick={() => void openPerson(person)} disabled={!session} aria-label={`Show films featuring ${person.name}`}>
                 <div style={person.imageUrl ? { backgroundImage: `url("${person.imageUrl}")` } : undefined}><span>{person.name.charAt(0)}</span></div>
                 <strong>{person.name}</strong><small>{person.role || 'Cast'}</small>
               </button>
@@ -647,7 +756,7 @@ function MoreDetails({
           <section className="more-section more-section--crew">
             <p className="eyebrow">CREW</p>
             {crew.length ? <div className="crew-list">{crew.map((person, index) => (
-              <div key={`${person.id || person.name}-${index}`}><span>{person.name}</span><small>{person.role || person.type || 'Crew'}</small></div>
+              <button className="crew-person" key={`${person.id || person.name}-${index}`} onClick={() => void openPerson(person)} disabled={!session} aria-label={`Show films connected to ${person.name}`}><span>{person.name}</span><small>{person.role || person.type || 'Crew'}</small></button>
             ))}</div> : <p className="more-page__empty">Crew information has not been added to this title.</p>}
           </section>
 
@@ -665,23 +774,10 @@ function MoreDetails({
             {production ? (
               <>
                 <dl className="production-spec-list">
-                  {[
-                    ['CINEMATOGRAPHY', production.cinematographers],
-                    ['CAMERAS', production.cameras],
-                    ['LENSES', production.lenses],
-                    ['LENS MAKERS', production.lensManufacturers],
-                    ['ACQUISITION', production.acquisition],
-                    ['CAMERA APERTURE', production.cameraAperture],
-                    ['FILM STOCK', production.filmStock],
-                    ['FILM GAUGE', production.filmGauge],
-                    ['CAPTURE RESOLUTION', production.captureResolution],
-                    ['CAPTURE FORMAT', production.captureFormats],
-                    ['PROJECT FORMAT', production.projectResolution],
-                    ['FRAME RATE', production.frameRate],
-                    ['FINISHING', production.finishingProcess],
-                    ['NATIVE ASPECT RATIO', production.aspectRatio]
-                  ].filter(([, values]) => values.length).map(([label, values]) => (
-                    <div key={label as string}><dt>{label}</dt><dd>{(values as string[]).join(' · ')}</dd></div>
+                  {productionGroups.filter((group) => group.values.length).map((group) => (
+                    <div key={group.field}><dt>{group.label}</dt><dd>{group.values.map((value) => (
+                      <button key={value} className="production-facet" onClick={() => void openProductionFacet(group.field, group.label, value)}>{value}</button>
+                    ))}</dd></div>
                   ))}
                 </dl>
                 <a className="production-source" href={production.sourceUrl} target="_blank" rel="noreferrer">COMMUNITY DATA FROM SHOTONWHAT ↗</a>
@@ -1833,6 +1929,7 @@ export default function App() {
                 versions={playbackVersions}
                 similar={similarItems}
                 session={session}
+                libraryMovies={visibleItems.filter((libraryItem) => libraryItem.type === 'Movie')}
                 loading={moreLoading}
                 error={moreError}
                 onBack={() => setMoreOpen(false)}

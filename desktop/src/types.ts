@@ -124,6 +124,8 @@ export type ProductionDetails = {
   source: 'ShotOnWhat';
 };
 
+export type ProductionFacetKey = Exclude<keyof ProductionDetails, 'sourceUrl' | 'source'>;
+
 export type ProductionScanProgress = {
   current: number;
   total: number;

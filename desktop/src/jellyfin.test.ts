@@ -170,6 +170,20 @@ describe('playback selection', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('IncludeItemTypes=Movie');
   });
 
+  it('resolves name-only crew entries before loading their movies', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Id: 'alex-proyas' }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [{ Id: 'dark-city', Name: 'Dark City', Type: 'Movie' }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' } as PrismSession;
+
+    await expect(getPersonMovies({ name: 'Alex Proyas', role: 'Director' }, session)).resolves.toMatchObject([
+      { id: 'dark-city', title: 'Dark City' }
+    ]);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/Persons/Alex%20Proyas');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('PersonIds=alex-proyas');
+  });
+
   it('combines seasons and removes duplicate episode numbers', async () => {
     const response = (items: unknown[]) => ({ ok: true, json: async () => ({ Items: items }) });
     vi.stubGlobal('fetch', vi.fn()

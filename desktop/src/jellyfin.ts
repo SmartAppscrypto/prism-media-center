@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.14.0"`
+    `Version="0.14.1"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -298,12 +298,22 @@ export async function getSimilarItems(item: MediaItem, session: PrismSession): P
 }
 
 export async function getPersonMovies(person: MediaPerson, session: PrismSession): Promise<MediaItem[]> {
-  if (!person.id) return [];
+  let personId = person.id;
+  if (!personId) {
+    const resolved = await api<Record<string, unknown>>(
+      session.serverUrl,
+      `/Persons/${encodeURIComponent(person.name)}`,
+      {},
+      session.accessToken
+    );
+    personId = typeof resolved.Id === 'string' ? resolved.Id : undefined;
+  }
+  if (!personId) return [];
   const params = new URLSearchParams({
     userId: session.userId,
     Recursive: 'true',
     IncludeItemTypes: 'Movie',
-    PersonIds: person.id,
+    PersonIds: personId,
     Fields: 'Overview,ProductionYear,PremiereDate,RunTimeTicks,BackdropImageTags',
     ImageTypeLimit: '1',
     EnableImageTypes: 'Primary,Backdrop',

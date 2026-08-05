@@ -284,8 +284,14 @@ button.poster:hover, button.poster:focus-visible { z-index: 2; transform: scale(
 .person-page__body { min-height: 42vh; }
 .person-film-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: clamp(22px, 2.2vw, 38px); }
 .person-film-grid .poster { max-width: 245px; }
+.connection-page__hero { min-height: max(70vh, 620px); background: radial-gradient(circle at 78% 30%, hsl(var(--selected-hue) 55% 38% / .2), transparent 34%), radial-gradient(circle at 55% 68%, hsl(calc(var(--selected-hue) + 62) 58% 30% / .1), transparent 40%), linear-gradient(180deg, transparent 15%, #07090b 100%); }
+.connection-page__hero h2 { max-width: 14ch; font-size: clamp(3.2rem, 6.2vw, 7rem); }
 .crew-list { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 56px; }
-.crew-list > div { display: grid; grid-template-columns: 1fr auto; gap: 20px; padding: 17px 0; border-bottom: 1px solid rgb(255 255 255 / .08); }
+.crew-list > div, .crew-list > button { display: grid; grid-template-columns: 1fr auto; gap: 20px; padding: 17px 0; border: 0; border-bottom: 1px solid rgb(255 255 255 / .08); background: transparent; text-align: left; }
+.crew-list > button { cursor: pointer; transition: border-color .25s, transform .25s; }
+.crew-list > button:hover:not(:disabled), .crew-list > button:focus-visible { outline: none; border-color: rgb(255 255 255 / .38); transform: translateX(4px); }
+.crew-list > button:hover:not(:disabled) span, .crew-list > button:focus-visible span { color: #fff; }
+.crew-list > button:disabled { cursor: default; }
 .crew-list span { color: rgb(255 255 255 / .7); }
 .crew-list small { color: rgb(255 255 255 / .3); font: .5rem 'Space Mono'; letter-spacing: .1em; text-align: right; text-transform: uppercase; }
 .financial-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: rgb(255 255 255 / .12); }
@@ -297,6 +303,9 @@ button.poster:hover, button.poster:focus-visible { z-index: 2; transform: scale(
 .production-spec-list > div { display: grid; grid-template-columns: minmax(120px, .38fr) 1fr; gap: 24px; padding: 20px 0; border-top: 1px solid rgb(255 255 255 / .08); }
 .production-spec-list dt { color: rgb(255 255 255 / .27); font: .48rem/1.5 'Space Mono'; letter-spacing: .16em; }
 .production-spec-list dd { margin: 0; color: rgb(255 255 255 / .72); font-size: .88rem; line-height: 1.5; }
+.production-facet { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; line-height: inherit; text-align: left; transition: color .2s, text-shadow .2s; }
+.production-facet:not(:last-child)::after { content: ' · '; color: rgb(255 255 255 / .28); white-space: pre; }
+.production-facet:hover, .production-facet:focus-visible { outline: none; color: #fff; text-shadow: 0 0 18px hsl(var(--selected-hue) 75% 76% / .25); }
 .production-source { display: inline-block; margin-top: 24px; color: rgb(255 255 255 / .25); font: .46rem 'Space Mono'; letter-spacing: .16em; text-decoration: none; transition: color .2s; }
 .production-source:hover { color: #fff; }
 .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
