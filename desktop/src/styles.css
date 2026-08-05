@@ -265,13 +265,25 @@ button.poster:hover, button.poster:focus-visible { z-index: 2; transform: scale(
 .album-artwork-missing small { max-width: 260px; font: .44rem/1.7 'Space Mono'; letter-spacing: .14em; }
 .album-artwork-source { margin: 28px 0 0; color: rgb(255 255 255 / .2); font: .43rem/1.7 'Space Mono'; letter-spacing: .14em; }
 .people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(138px, 1fr)); gap: 28px 18px; }
-.person-card { min-width: 0; }
+.person-card { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .person-card > div { aspect-ratio: 4/5; display: grid; place-items: center; margin-bottom: 14px; overflow: hidden; background: radial-gradient(circle at 50% 32%, hsl(var(--selected-hue) 58% 40% / .55), rgb(20 22 25)); background-size: cover; background-position: center; }
 .person-card > div span { color: rgb(255 255 255 / .2); font: 400 3.5rem 'Instrument Serif'; }
 .person-card > div[style] span { display: none; }
 .person-card strong, .person-card small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .person-card strong { color: rgb(255 255 255 / .78); font: 400 .9rem 'Familjen Grotesk'; }
 .person-card small { margin-top: 5px; color: rgb(255 255 255 / .32); font: .5rem 'Space Mono'; letter-spacing: .08em; }
+.person-card > div { transition: transform .42s cubic-bezier(.16,.78,.18,1), box-shadow .35s, filter .35s; }
+.person-card:hover:not(:disabled), .person-card:focus-visible { outline: none; }
+.person-card:hover:not(:disabled) > div, .person-card:focus-visible > div { transform: translateY(-5px) scale(1.018); box-shadow: 0 22px 55px rgb(0 0 0 / .5), 0 0 0 1px rgb(255 255 255 / .25); filter: brightness(1.08); }
+.person-card:hover:not(:disabled) strong, .person-card:focus-visible strong { color: #fff; }
+.person-card:disabled { cursor: default; }
+.person-card:disabled > div { filter: saturate(.7); }
+.person-page__hero { min-height: 58vh; background-image: linear-gradient(90deg, #07090b 0 36%, rgb(7 9 11 / .78) 56%, rgb(7 9 11 / .22) 82%, #07090b 100%), linear-gradient(180deg, transparent 18%, #07090b 100%), var(--person-image, none); background-position: center, center, 82% 28%; background-repeat: no-repeat; background-size: cover, cover, min(42vw, 650px) auto; }
+.person-page__hero h2 { max-width: 8ch; }
+.person-page__count { margin: 4px 0 0; color: rgb(255 255 255 / .48); font: .52rem 'Space Mono'; letter-spacing: .24em; }
+.person-page__body { min-height: 42vh; }
+.person-film-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: clamp(22px, 2.2vw, 38px); }
+.person-film-grid .poster { max-width: 245px; }
 .crew-list { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 56px; }
 .crew-list > div { display: grid; grid-template-columns: 1fr auto; gap: 20px; padding: 17px 0; border-bottom: 1px solid rgb(255 255 255 / .08); }
 .crew-list span { color: rgb(255 255 255 / .7); }

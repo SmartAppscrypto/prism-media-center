@@ -1,4 +1,4 @@
-import type { LibraryView, MediaDetails, MediaItem, PlaybackDetails, PrismSession, RemoteSubtitle, TrackLyrics } from './types';
+import type { LibraryView, MediaDetails, MediaItem, MediaPerson, PlaybackDetails, PrismSession, RemoteSubtitle, TrackLyrics } from './types';
 
 const deviceIdKey = 'prism-device-id';
 
@@ -20,7 +20,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.13.9"`
+    `Version="0.14.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -295,6 +295,30 @@ export async function getSimilarItems(item: MediaItem, session: PrismSession): P
     session.accessToken
   );
   return (result.Items ?? []).filter((similar) => similar.Type === 'Movie').map((similar, index) => mapMediaItem(similar, session, index));
+}
+
+export async function getPersonMovies(person: MediaPerson, session: PrismSession): Promise<MediaItem[]> {
+  if (!person.id) return [];
+  const params = new URLSearchParams({
+    userId: session.userId,
+    Recursive: 'true',
+    IncludeItemTypes: 'Movie',
+    PersonIds: person.id,
+    Fields: 'Overview,ProductionYear,PremiereDate,RunTimeTicks,BackdropImageTags',
+    ImageTypeLimit: '1',
+    EnableImageTypes: 'Primary,Backdrop',
+    SortBy: 'ProductionYear,SortName',
+    SortOrder: 'Descending'
+  });
+  const result = await api<{ Items?: Array<Record<string, unknown>> }>(
+    session.serverUrl,
+    `/Users/${session.userId}/Items?${params}`,
+    {},
+    session.accessToken
+  );
+  return (result.Items ?? [])
+    .filter((movie) => movie.Type === 'Movie')
+    .map((movie, index) => mapMediaItem(movie, session, index));
 }
 
 export async function getSeriesEpisodes(series: MediaItem, session: PrismSession): Promise<MediaItem[]> {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPlaybackVersions, getSeriesEpisodes, getServerLyrics, searchRemoteSubtitles } from './jellyfin';
+import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackVersions, getSeriesEpisodes, getServerLyrics, searchRemoteSubtitles } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -152,6 +152,22 @@ describe('playback selection', () => {
     const details = await getItemDetails({ id: 'pirates' } as MediaItem, { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' });
     expect(details.tmdbId).toBe('22');
     expect(details.imdbId).toBe('tt0325980');
+  });
+
+  it('loads only library movies for a selected cast member', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ Items: [{ Id: 'movie-1', Name: 'I, Robot', Type: 'Movie', ProductionYear: 2004 }] })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'name' } as PrismSession;
+
+    await expect(getPersonMovies({ id: 'will-smith', name: 'Will Smith', type: 'Actor' }, session)).resolves.toMatchObject([
+      { id: 'movie-1', title: 'I, Robot', type: 'Movie', year: 2004 }
+    ]);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('PersonIds=will-smith');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('IncludeItemTypes=Movie');
   });
 
   it('combines seasons and removes duplicate episode numbers', async () => {

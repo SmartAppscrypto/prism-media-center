@@ -2,9 +2,9 @@ import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPo
 import { createPortal } from 'react-dom';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
-import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
+import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, MediaPerson, PlaybackDetails, PrismSession, ProductionDetails, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
 import { compareArtistsThenTitles, compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
 import { analyseFrequencyData, type AudioBands } from './audioReactive';
@@ -504,12 +504,57 @@ function AlbumPlayer({ album, session }: { album: MediaItem; session: PrismSessi
   );
 }
 
+function PersonFilmography({
+  person,
+  originTitle,
+  films,
+  loading,
+  error,
+  onBack,
+  onSelect
+}: {
+  person: MediaPerson;
+  originTitle: string;
+  films: MediaItem[];
+  loading: boolean;
+  error: string;
+  onBack: () => void;
+  onSelect: (item: MediaItem) => void;
+}) {
+  return (
+    <section className="more-page person-page" aria-label={`${person.name} films in your library`}>
+      <div
+        className="more-page__hero person-page__hero"
+        style={person.imageUrl ? { '--person-image': `url("${person.imageUrl}")` } as React.CSSProperties : undefined}
+      >
+        <button className="reshelve back-button" aria-label={`Back to ${originTitle} cast`} onClick={onBack}><span aria-hidden="true">←</span><span>BACK TO CAST</span></button>
+        <p className="eyebrow">IN YOUR LIBRARY</p>
+        <h2>{person.name}</h2>
+        <p className="person-page__count">{loading ? 'DEVELOPING FILMOGRAPHY…' : `${films.length} ${films.length === 1 ? 'FILM' : 'FILMS'}`}</p>
+      </div>
+      {loading && <p className="more-page__status">SEARCHING YOUR SHELVES…</p>}
+      {error && <p className="more-page__status more-page__status--error">{error}</p>}
+      {!loading && !error && (
+        <div className="more-page__body person-page__body">
+          <section className="more-section">
+            <p className="eyebrow">FEATURING {person.name.toUpperCase()}</p>
+            {films.length ? <div className="person-film-grid">{films.map((film) => (
+              <Poster key={film.id} item={film} onSelect={onSelect} />
+            ))}</div> : <p className="more-page__empty">No films featuring {person.name} were found in your current library.</p>}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function MoreDetails({
   item,
   details,
   production,
   versions,
   similar,
+  session,
   loading,
   error,
   onBack,
@@ -520,13 +565,55 @@ function MoreDetails({
   production: ProductionDetails | null;
   versions: PlaybackDetails[];
   similar: MediaItem[];
+  session: PrismSession | null;
   loading: boolean;
   error: string;
   onBack: () => void;
   onSelect: (item: MediaItem) => void;
 }) {
+  const [selectedPerson, setSelectedPerson] = useState<MediaPerson | null>(null);
+  const [personFilms, setPersonFilms] = useState<MediaItem[]>([]);
+  const [personLoading, setPersonLoading] = useState(false);
+  const [personError, setPersonError] = useState('');
+  const personRequestRef = useRef(0);
   const cast = details?.people.filter((person) => person.type === 'Actor') ?? [];
   const crew = details?.people.filter((person) => person.type !== 'Actor') ?? [];
+
+  useEffect(() => {
+    personRequestRef.current += 1;
+    setSelectedPerson(null);
+    setPersonFilms([]);
+    setPersonError('');
+  }, [item.id]);
+
+  async function openPerson(person: MediaPerson) {
+    if (!person.id || !session) return;
+    playUiTone('panel');
+    setSelectedPerson(person);
+    setPersonFilms([]);
+    setPersonError('');
+    setPersonLoading(true);
+    const request = ++personRequestRef.current;
+    try {
+      const films = await getPersonMovies(person, session);
+      if (request === personRequestRef.current) setPersonFilms(films);
+    } catch (reason) {
+      if (request === personRequestRef.current) setPersonError(reason instanceof Error ? reason.message : `PRISM could not load ${person.name}'s films.`);
+    } finally {
+      if (request === personRequestRef.current) setPersonLoading(false);
+    }
+  }
+
+  if (selectedPerson) return <PersonFilmography
+    person={selectedPerson}
+    originTitle={item.title}
+    films={personFilms}
+    loading={personLoading}
+    error={personError}
+    onBack={() => { personRequestRef.current += 1; setSelectedPerson(null); }}
+    onSelect={onSelect}
+  />;
+
   return (
     <section className="more-page" aria-label={`More about ${item.title}`}>
       <div className="more-page__hero">
@@ -550,10 +637,10 @@ function MoreDetails({
           <section className="more-section">
             <p className="eyebrow">CAST</p>
             {cast.length ? <div className="people-grid">{cast.map((person, index) => (
-              <article className="person-card" key={`${person.id || person.name}-${index}`}>
+              <button className="person-card" key={`${person.id || person.name}-${index}`} onClick={() => void openPerson(person)} disabled={!person.id || !session} aria-label={`Show films featuring ${person.name}`}>
                 <div style={person.imageUrl ? { backgroundImage: `url("${person.imageUrl}")` } : undefined}><span>{person.name.charAt(0)}</span></div>
                 <strong>{person.name}</strong><small>{person.role || 'Cast'}</small>
-              </article>
+              </button>
             ))}</div> : <p className="more-page__empty">Cast information has not been added to this title.</p>}
           </section>
 
@@ -1745,6 +1832,7 @@ export default function App() {
                 production={productionDetails}
                 versions={playbackVersions}
                 similar={similarItems}
+                session={session}
                 loading={moreLoading}
                 error={moreError}
                 onBack={() => setMoreOpen(false)}
