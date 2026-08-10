@@ -2,7 +2,7 @@
   "name": "@prism/desktop",
   "private": true,
   "type": "module",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "Prism desktop media client",
   "author": "Prism Media",
   "main": "electron/main.cjs",
@@ -14,7 +14,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "package:mac": "npm run native:build && npm run vlc:prepare && npm run build && electron-builder --mac dmg --publish never",
-    "package:windows": "npm run build && electron-builder --win nsis"
+    "package:windows": "npm run native:build && npm run vlc:prepare && npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -67,7 +67,9 @@
       "artifactName": "Prism-${version}-${arch}.${ext}"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "artifactName": "Prism-${version}-${arch}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,

@@ -1,0 +1,39 @@
+name: Windows desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/windows-desktop.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prepare official VLC runtime
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "vlc.zip"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP "vlc-runtime"
+          Invoke-WebRequest "https://download.videolan.org/pub/videolan/vlc/3.0.23/win64/vlc-3.0.23-win64.zip" -OutFile $archive
+          Expand-Archive $archive -DestinationPath $runtimeRoot
+          "PRISM_VLC_DIR=$runtimeRoot\vlc-3.0.23" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: npm test
+      - run: npm run package:windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Prism-Windows-${{ github.sha }}
+          path: desktop/release/*Setup.exe
+          if-no-files-found: error
+          retention-days: 30

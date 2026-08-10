@@ -5,11 +5,12 @@ import { fileURLToPath } from 'node:url';
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const nodeGyp = resolve(desktopDirectory, '..', 'node_modules', 'node-gyp', 'bin', 'node-gyp.js');
 const nativeDirectory = resolve(desktopDirectory, 'electron', 'native');
+const architecture = process.env.npm_config_arch || process.arch;
 const result = spawnSync(process.execPath, [
   nodeGyp,
   'rebuild',
   '--target=43.2.0',
-  '--arch=arm64',
+  `--arch=${architecture}`,
   '--dist-url=https://electronjs.org/headers'
 ], { cwd: nativeDirectory, stdio: 'inherit' });
 

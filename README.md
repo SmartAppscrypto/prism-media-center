@@ -36,7 +36,9 @@ npm install
 npm run package:windows
 ```
 
-The NSIS installer is written to `desktop/release/`.
+Install the 64-bit VLC desktop app before making a local build, or set `PRISM_VLC_DIR` to an extracted official VLC directory. VLC is used as an embedded decoding runtime during packaging; end users do not see a separate VLC window and do not need to install VLC themselves. The self-contained NSIS installer is written to `desktop/release/`.
+
+The Windows workflow also produces a downloadable installer artifact on GitHub. The native Windows player decodes formats such as HEVC, E-AC-3, and TrueHD on the PC while preserving the original server stream, so the NAS does not transcode those titles.
 
 ## Current slice
 
@@ -47,6 +49,6 @@ The NSIS installer is written to `desktop/release/`.
 - Prism poster wall and animated inspect/reshelve flow
 - Direct-play video in the desktop client
 - Demo library for UI work without a server
-- Windows packaging configuration
+- Embedded VLC playback on macOS and Windows
 
-Direct play is the first playback path. Series appear in the library, but season/episode navigation is the next UI milestone. Some codecs and containers will also require a Jellyfin transcoding/HLS playback negotiation pass.
+Direct play is the first playback path. PRISM intentionally asks the server to preserve original streams and uses its embedded desktop decoder for formats that Chromium cannot play natively.

@@ -20,10 +20,14 @@ let nativePlayer;
 
 function nativePlayerPaths() {
   const packagedRuntime = path.join(process.resourcesPath, 'vlc');
-  const developmentRuntime = '/Applications/VLC.app/Contents/MacOS';
+  const developmentRuntime = process.platform === 'win32'
+    ? process.env.PRISM_VLC_DIR || path.join(process.env.ProgramFiles || 'C:\\Program Files', 'VideoLAN', 'VLC')
+    : '/Applications/VLC.app/Contents/MacOS';
   const runtime = fsSync.existsSync(packagedRuntime) ? packagedRuntime : developmentRuntime;
   return {
-    library: path.join(runtime, 'lib', 'libvlc.5.dylib'),
+    library: process.platform === 'win32'
+      ? path.join(runtime, 'libvlc.dll')
+      : path.join(runtime, 'lib', 'libvlc.5.dylib'),
     plugins: path.join(runtime, 'plugins')
   };
 }
@@ -301,6 +305,12 @@ function createWindow() {
     window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
   window.on('closed', () => getNativePlayer()?.stop());
+  const resizeNativeSurface = () => getNativePlayer()?.resize?.(window.getNativeWindowHandle());
+  window.on('resize', resizeNativeSurface);
+  window.on('maximize', resizeNativeSurface);
+  window.on('unmaximize', resizeNativeSurface);
+  window.on('enter-full-screen', resizeNativeSurface);
+  window.on('leave-full-screen', resizeNativeSurface);
 }
 
 app.whenReady().then(() => {
