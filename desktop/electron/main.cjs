@@ -274,6 +274,14 @@ ipcMain.on('prism-window-drag-move', (event, point) => {
 });
 
 ipcMain.on('prism-window-drag-end', (event) => windowDrags.delete(event.sender.id));
+ipcMain.on('prism-window-minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
+ipcMain.on('prism-window-toggle-maximize', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+  if (window.isMaximized()) window.unmaximize();
+  else window.maximize();
+});
+ipcMain.on('prism-window-close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
 
 function createWindow() {
   const window = new BrowserWindow({

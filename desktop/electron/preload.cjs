@@ -1,9 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('prismWindow', {
+  platform: process.platform,
   startDrag: (x, y) => ipcRenderer.send('prism-window-drag-start', { x, y }),
   moveDrag: (x, y) => ipcRenderer.send('prism-window-drag-move', { x, y }),
-  endDrag: () => ipcRenderer.send('prism-window-drag-end')
+  endDrag: () => ipcRenderer.send('prism-window-drag-end'),
+  minimize: () => ipcRenderer.send('prism-window-minimize'),
+  toggleMaximize: () => ipcRenderer.send('prism-window-toggle-maximize'),
+  close: () => ipcRenderer.send('prism-window-close')
 });
 
 contextBridge.exposeInMainWorld('prismMetadata', {

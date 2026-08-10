@@ -100,6 +100,17 @@ function windowDragProps() {
   };
 }
 
+function WindowControls() {
+  if (window.prismWindow?.platform !== 'win32') return null;
+  return (
+    <div className="window-controls" aria-label="Window controls">
+      <button onClick={() => window.prismWindow?.minimize()} aria-label="Minimize"><span aria-hidden="true">―</span></button>
+      <button onClick={() => window.prismWindow?.toggleMaximize()} aria-label="Maximize or restore"><span className="window-controls__maximize" aria-hidden="true" /></button>
+      <button className="window-controls__close" onClick={() => window.prismWindow?.close()} aria-label="Close"><span aria-hidden="true">×</span></button>
+    </div>
+  );
+}
+
 function formatRuntime(minutes?: number) {
   if (!minutes) return '';
   const hours = Math.floor(minutes / 60);
@@ -1742,14 +1753,15 @@ export default function App() {
   }
 
   const dragRegion = <div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />;
+  const windowControls = <WindowControls />;
 
-  if (!session && !demo) return <>{dragRegion}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
-  if (playingItem && session) return <>{dragRegion}<Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onPreferencesChange={updatePreferences} onClose={() => setPlayingItem(null)} /></>;
+  if (!session && !demo) return <>{dragRegion}{windowControls}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
+  if (playingItem && session) return <>{dragRegion}{windowControls}<Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onPreferencesChange={updatePreferences} onClose={() => setPlayingItem(null)} /></>;
 
   const seasons = [...new Set(seriesEpisodes.map((episode) => episode.seasonNumber ?? 0))];
   const visibleEpisodes = seriesEpisodes.filter((episode) => (episode.seasonNumber ?? 0) === selectedSeason);
   return (
-    <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} /><main className={`library library--grid-${preferences.gridDensity} ${isMusicLibrary ? 'library--music' : ''} ${preferences.reducedMotion ? 'library--reduced-motion' : ''} ${selected ? 'library--inspect' : ''}`}>
+    <><div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />{windowControls}<main className={`library library--grid-${preferences.gridDensity} ${isMusicLibrary ? 'library--music' : ''} ${preferences.reducedMotion ? 'library--reduced-motion' : ''} ${selected ? 'library--inspect' : ''}`}>
       <header {...windowDragProps()}>
         <div className="header__brand">
           {!demo && <button className="menu-trigger" onClick={() => { playUiTone('panel'); setDrawerPage('libraries'); setMenuOpen(true); }} aria-label="Open library menu"><span /><span /><span /></button>}

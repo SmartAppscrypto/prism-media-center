@@ -153,7 +153,7 @@ bool attachVideoWindow(HWND parent) {
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = DefWindowProcW;
     windowClass.hInstance = module;
-    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    windowClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     windowClass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     windowClass.lpszClassName = className;
     if (!RegisterClassExW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {

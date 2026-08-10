@@ -5,9 +5,13 @@ export {};
 declare global {
   interface Window {
     prismWindow?: {
+      platform: string;
       startDrag: (x: number, y: number) => void;
       moveDrag: (x: number, y: number) => void;
       endDrag: () => void;
+      minimize: () => void;
+      toggleMaximize: () => void;
+      close: () => void;
     };
     prismMetadata?: {
       hasTmdbToken: () => Promise<boolean>;
