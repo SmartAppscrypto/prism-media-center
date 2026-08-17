@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('prismWindow', {
   endDrag: () => ipcRenderer.send('prism-window-drag-end'),
   minimize: () => ipcRenderer.send('prism-window-minimize'),
   toggleMaximize: () => ipcRenderer.send('prism-window-toggle-maximize'),
+  setFullscreen: (enabled) => ipcRenderer.send('prism-window-set-fullscreen', enabled),
+  toggleFullscreen: () => ipcRenderer.send('prism-window-toggle-fullscreen'),
   close: () => ipcRenderer.send('prism-window-close')
 });
 

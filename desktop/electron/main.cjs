@@ -281,22 +281,27 @@ ipcMain.on('prism-window-toggle-maximize', (event) => {
   if (window.isMaximized()) window.unmaximize();
   else window.maximize();
 });
+ipcMain.on('prism-window-set-fullscreen', (event, enabled) => BrowserWindow.fromWebContents(event.sender)?.setFullScreen(Boolean(enabled)));
+ipcMain.on('prism-window-toggle-fullscreen', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (window) window.setFullScreen(!window.isFullScreen());
+});
 ipcMain.on('prism-window-close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
 
 function createWindow() {
-  const usesTransparentWindow = process.platform === 'darwin';
+  const isWindows = process.platform === 'win32';
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 640,
-    // Windows' desktop compositor can show through a transparent top-level
-    // window around a child HWND (the native VLC surface). Keep Windows
-    // opaque so letterboxed video always resolves against true black.
-    backgroundColor: usesTransparentWindow ? '#00000000' : '#000000',
-    transparent: usesTransparentWindow,
+    // The VLC surface sits behind Electron's transparent renderer. Its own
+    // Windows child surface paints the picture and solid-black letterboxing.
+    backgroundColor: '#00000000',
+    transparent: true,
+    frame: !isWindows,
     autoHideMenuBar: true,
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

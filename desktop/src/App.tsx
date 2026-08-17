@@ -972,6 +972,12 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
   const [remoteSubtitleStatus, setRemoteSubtitleStatus] = useState('');
   const [remoteSubtitleBusy, setRemoteSubtitleBusy] = useState(false);
 
+  useEffect(() => {
+    if (window.prismWindow?.platform !== 'win32') return;
+    window.prismWindow.setFullscreen(true);
+    return () => window.prismWindow?.setFullscreen(false);
+  }, []);
+
   const revealChrome = useCallback(() => {
     setChromeVisible(true);
     window.clearTimeout(idleTimerRef.current);
@@ -1218,6 +1224,9 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
       } else if (event.key === ' ' || event.key.toLowerCase() === 'k') {
         event.preventDefault();
         togglePlayback();
+      } else if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        window.prismWindow?.toggleFullscreen();
       }
     }
     window.addEventListener('keydown', onPlayerKeyDown);
@@ -1312,6 +1321,7 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
           aria-label="Playback position"
         />
         <span className="player__time">{formatClock(duration)}</span>
+        {window.prismWindow?.platform === 'win32' && <button onClick={() => window.prismWindow?.toggleFullscreen()} aria-label="Toggle full screen">FULL</button>}
         <button
           onClick={() => {
             if (nativeModeRef.current) {
@@ -1774,7 +1784,7 @@ export default function App() {
   const windowControls = <WindowControls />;
 
   if (!session && !demo) return <>{dragRegion}{windowControls}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
-  if (playingItem && session) return <>{dragRegion}{windowControls}<Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onPreferencesChange={updatePreferences} onClose={() => setPlayingItem(null)} /></>;
+  if (playingItem && session) return <Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onPreferencesChange={updatePreferences} onClose={() => setPlayingItem(null)} />;
 
   const seasons = [...new Set(seriesEpisodes.map((episode) => episode.seasonNumber ?? 0))];
   const visibleEpisodes = seriesEpisodes.filter((episode) => (episode.seasonNumber ?? 0) === selectedSeason);

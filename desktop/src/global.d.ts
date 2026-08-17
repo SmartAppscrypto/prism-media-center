@@ -11,6 +11,8 @@ declare global {
       endDrag: () => void;
       minimize: () => void;
       toggleMaximize: () => void;
+      setFullscreen: (enabled: boolean) => void;
+      toggleFullscreen: () => void;
       close: () => void;
     };
     prismMetadata?: {
