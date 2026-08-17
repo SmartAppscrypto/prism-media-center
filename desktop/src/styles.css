@@ -408,6 +408,7 @@ html:has(.player--native), body:has(.player--native), #root:has(.player--native)
 .player__close { position: absolute; z-index: 60; top: 32px; left: 36px; min-width: 112px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 12px 18px; border: 1px solid rgb(255 255 255 / .3); background: rgb(0 0 0 / .55); backdrop-filter: blur(10px); cursor: pointer; pointer-events: auto; app-region: no-drag; -webkit-app-region: no-drag; font: .68rem 'Space Mono'; letter-spacing: .28em; }
 .player__chrome { opacity: 1; transform: translateY(0); transition: opacity .45s ease, transform .45s ease; }
 .player--idle { cursor: none; }
+.player--idle .player__native-click-target { cursor: none; }
 .player--idle .player__chrome { pointer-events: none; opacity: 0; }
 .player--idle .player__close { transform: translateY(-14px); }
 .player--idle .player__controls { transform: translateY(18px); }
