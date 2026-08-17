@@ -63,6 +63,7 @@ libvlc_instance_t* instance = nullptr;
 libvlc_media_player_t* player = nullptr;
 HWND parentWindow = nullptr;
 HWND videoWindow = nullptr;
+HWND backdropWindow = nullptr;
 std::string lastError;
 std::atomic<uint64_t> subtitleCommandGeneration{0};
 
@@ -138,6 +139,23 @@ HWND nativeWindowFromBuffer(napi_env env, napi_value value) {
 
 void resizeVideoWindow() {
   if (!parentWindow || !videoWindow) return;
+  if (backdropWindow) {
+    if (IsIconic(parentWindow) || !IsWindowVisible(parentWindow)) {
+      ShowWindow(backdropWindow, SW_HIDE);
+    } else {
+      RECT windowBounds{};
+      if (GetWindowRect(parentWindow, &windowBounds)) {
+        // Electron must stay transparent so Chromium can sit above VLC's
+        // native child HWND. A separate opaque window immediately behind it
+        // supplies the black cinema bars that a layered window cannot paint.
+        SetWindowPos(backdropWindow, parentWindow,
+          windowBounds.left, windowBounds.top,
+          windowBounds.right - windowBounds.left, windowBounds.bottom - windowBounds.top,
+          SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        RedrawWindow(backdropWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+      }
+    }
+  }
   RECT bounds{};
   if (!GetClientRect(parentWindow, &bounds)) return;
   SetWindowPos(videoWindow, HWND_BOTTOM, 0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top,
@@ -184,11 +202,21 @@ bool attachVideoWindow(HWND parent) {
     classRegistered = true;
   }
 
-  if (videoWindow && parentWindow != parent) {
+  if ((videoWindow || backdropWindow) && parentWindow != parent) {
     DestroyWindow(videoWindow);
+    DestroyWindow(backdropWindow);
     videoWindow = nullptr;
+    backdropWindow = nullptr;
   }
   parentWindow = parent;
+  if (!backdropWindow) {
+    backdropWindow = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
+      className, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, module, nullptr);
+    if (!backdropWindow) {
+      lastError = windowsError("PRISM could not create its black video backdrop.");
+      return false;
+    }
+  }
   if (!videoWindow) {
     videoWindow = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TRANSPARENT, className, L"",
       WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN, 0, 0, 1, 1, parent, nullptr, module, nullptr);
@@ -326,6 +354,7 @@ napi_value stop(napi_env env, napi_callback_info) {
   ++subtitleCommandGeneration;
   if (player) api.stop(player);
   if (videoWindow) ShowWindow(videoWindow, SW_HIDE);
+  if (backdropWindow) ShowWindow(backdropWindow, SW_HIDE);
   napi_value undefined;
   napi_get_undefined(env, &undefined);
   return undefined;
@@ -437,6 +466,7 @@ void cleanup(void*) {
   if (player) { api.stop(player); api.releasePlayer(player); player = nullptr; }
   if (instance) { api.releaseInstance(instance); instance = nullptr; }
   if (videoWindow) { DestroyWindow(videoWindow); videoWindow = nullptr; parentWindow = nullptr; }
+  if (backdropWindow) { DestroyWindow(backdropWindow); backdropWindow = nullptr; }
   if (api.library) { FreeLibrary(api.library); api.library = nullptr; }
   if (api.coreLibrary) { FreeLibrary(api.coreLibrary); api.coreLibrary = nullptr; }
 }

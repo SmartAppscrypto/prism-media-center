@@ -324,6 +324,10 @@ function createWindow() {
   window.on('closed', () => getNativePlayer()?.stop());
   const resizeNativeSurface = () => getNativePlayer()?.resize?.(window.getNativeWindowHandle());
   window.on('resize', resizeNativeSurface);
+  window.on('move', resizeNativeSurface);
+  window.on('focus', resizeNativeSurface);
+  window.on('minimize', resizeNativeSurface);
+  window.on('restore', resizeNativeSurface);
   window.on('maximize', resizeNativeSurface);
   window.on('unmaximize', resizeNativeSurface);
   window.on('enter-full-screen', resizeNativeSurface);
