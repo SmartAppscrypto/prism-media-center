@@ -284,13 +284,17 @@ ipcMain.on('prism-window-toggle-maximize', (event) => {
 ipcMain.on('prism-window-close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
 
 function createWindow() {
+  const usesTransparentWindow = process.platform === 'darwin';
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 640,
-    backgroundColor: '#00000000',
-    transparent: true,
+    // Windows' desktop compositor can show through a transparent top-level
+    // window around a child HWND (the native VLC surface). Keep Windows
+    // opaque so letterboxed video always resolves against true black.
+    backgroundColor: usesTransparentWindow ? '#00000000' : '#000000',
+    transparent: usesTransparentWindow,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
     webPreferences: {

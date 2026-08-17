@@ -48,6 +48,25 @@ describe('Prism shell', () => {
     expect(posterButtons[0]).toHaveAccessibleName('Open Orbital Decay');
   });
 
+  it('switches cleanly between pointer and arrow-key poster navigation', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'EXPLORE THE DEMO' }));
+
+    const wall = screen.getByRole('region', { name: 'Media library' });
+    const posters = within(wall).getAllByRole('button');
+    fireEvent.pointerMove(posters[1]);
+    expect(posters[1]).toHaveFocus();
+    expect(wall).toHaveClass('wall--pointer');
+
+    fireEvent.keyDown(posters[1], { key: 'ArrowRight' });
+    expect(posters[2]).toHaveFocus();
+    expect(wall).toHaveClass('wall--keyboard');
+
+    fireEvent.pointerMove(posters[0]);
+    expect(posters[0]).toHaveFocus();
+    expect(wall).toHaveClass('wall--pointer');
+  });
+
   it('opens persistent settings with All Media hidden and reorderable libraries', async () => {
     localStorage.setItem('prism-session', JSON.stringify({ serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'steven' }));
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => ({

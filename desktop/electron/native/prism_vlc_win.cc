@@ -142,6 +142,27 @@ void resizeVideoWindow() {
   if (!GetClientRect(parentWindow, &bounds)) return;
   SetWindowPos(videoWindow, HWND_BOTTOM, 0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top,
     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  // libVLC only owns the pixels inside the decoded picture. Repaint the
+  // parent surface so the remaining aspect-ratio bars never inherit the
+  // transparent Electron desktop background.
+  RedrawWindow(videoWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+}
+
+LRESULT CALLBACK videoSurfaceWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+  if (message == WM_ERASEBKGND) {
+    RECT bounds{};
+    GetClientRect(window, &bounds);
+    FillRect(reinterpret_cast<HDC>(wParam), &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    return 1;
+  }
+  if (message == WM_PAINT) {
+    PAINTSTRUCT paint{};
+    HDC context = BeginPaint(window, &paint);
+    FillRect(context, &paint.rcPaint, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    EndPaint(window, &paint);
+    return 0;
+  }
+  return DefWindowProcW(window, message, wParam, lParam);
 }
 
 bool attachVideoWindow(HWND parent) {
@@ -151,7 +172,7 @@ bool attachVideoWindow(HWND parent) {
   if (!classRegistered) {
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
-    windowClass.lpfnWndProc = DefWindowProcW;
+    windowClass.lpfnWndProc = videoSurfaceWindowProc;
     windowClass.hInstance = module;
     windowClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     windowClass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));

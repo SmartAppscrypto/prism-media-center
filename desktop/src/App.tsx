@@ -1439,6 +1439,7 @@ export default function App() {
   const [sortMode, setSortMode] = useState<SortMode>(preferences.defaultSort);
   const [randomNonce, setRandomNonce] = useState(0);
   const [scrollbarVisible, setScrollbarVisible] = useState(false);
+  const [libraryInputMode, setLibraryInputMode] = useState<'pointer' | 'keyboard'>('pointer');
   const wallRef = useRef<HTMLElement>(null);
   const scrollbarTimerRef = useRef<number | undefined>(undefined);
 
@@ -1720,16 +1721,33 @@ export default function App() {
 
   function navigatePosterGrid(event: ReactKeyboardEvent<HTMLElement>) {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    setLibraryInputMode('keyboard');
     const posters = Array.from(wallRef.current?.querySelectorAll<HTMLButtonElement>('button.poster') ?? []);
     const current = posters.indexOf(event.target as HTMLButtonElement);
-    if (current < 0 || !posters.length) return;
+    if (!posters.length) return;
+    if (current < 0) {
+      event.preventDefault();
+      const firstVisible = posters.find((poster) => {
+        const bounds = poster.getBoundingClientRect();
+        return bounds.bottom > 86 && bounds.top < window.innerHeight;
+      }) ?? posters[0];
+      firstVisible.focus({ preventScroll: true });
+      firstVisible.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      return;
+    }
     const columnCount = Math.max(1, getComputedStyle(event.currentTarget).gridTemplateColumns.split(' ').length);
     const offsets: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columnCount, ArrowDown: columnCount };
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? posters.length - 1 : current + offsets[event.key];
     if (next < 0 || next >= posters.length) return;
     event.preventDefault();
     posters[next].focus();
-    posters[next].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    posters[next].scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
+
+  function navigatePosterWithPointer(event: ReactPointerEvent<HTMLElement>) {
+    setLibraryInputMode('pointer');
+    const poster = (event.target as HTMLElement).closest<HTMLButtonElement>('button.poster');
+    if (poster && document.activeElement !== poster) poster.focus({ preventScroll: true });
   }
 
   function selectView(view: LibraryView | null) {
@@ -1913,7 +1931,15 @@ export default function App() {
       {libraryError && <div className="library-error">{libraryError} <button onClick={disconnect}>Reconnect</button></div>}
       {!libraryError && (libraryLoading || !visibleItems.length) && <div className="loading">DEVELOPING {activeView?.name?.toUpperCase() || 'YOUR LIBRARY'}…</div>}
 
-      <section ref={wallRef} className={`wall ${scrollbarVisible ? 'wall--scrollbar-visible' : ''}`} aria-label={isMusicLibrary ? 'Music albums' : 'Media library'} onKeyDown={navigatePosterGrid}>
+      <section
+        ref={wallRef}
+        className={`wall wall--${libraryInputMode} ${scrollbarVisible ? 'wall--scrollbar-visible' : ''}`}
+        aria-label={isMusicLibrary ? 'Music albums' : 'Media library'}
+        onPointerMove={navigatePosterWithPointer}
+        onPointerDown={() => setLibraryInputMode('pointer')}
+        onKeyDownCapture={(event) => { if (event.key === 'Tab') setLibraryInputMode('keyboard'); }}
+        onKeyDown={navigatePosterGrid}
+      >
         {sortedItems.map((item) => <Poster key={item.id} item={item} onSelect={setSelected} />)}
       </section>
 
