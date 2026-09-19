@@ -6,7 +6,7 @@ const lastPlayed = new Map<UiTone, number>();
 const profiles: Record<UiTone, { frequency: number; endFrequency: number; duration: number; gain: number; overtone?: number }> = {
   hover: { frequency: 205, endFrequency: 158, duration: .055, gain: .012 },
   panel: { frequency: 142, endFrequency: 118, duration: .095, gain: .018, overtone: 238 },
-  play: { frequency: 118, endFrequency: 154, duration: .15, gain: .024, overtone: 236 }
+  play: { frequency: 320, endFrequency: 210, duration: .045, gain: .014 }
 };
 
 function emitTone(context: AudioContext, tone: UiTone) {

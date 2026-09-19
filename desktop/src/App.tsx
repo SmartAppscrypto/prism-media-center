@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
 import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
-import prismPlayAsset from './prismPlayAsset';
+import { PlayButton } from './PlayButton';
 import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, MediaPerson, PlaybackDetails, PrismSession, ProductionDetails, ProductionFacetKey, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
 import { compareArtistsThenTitles, compareTitles, titleInitial } from './sorting';
 import { parseWebVtt, type SubtitleCue } from './subtitles';
@@ -14,15 +14,6 @@ import { playUiTone } from './uiSounds';
 
 const sessionKey = 'prism-session';
 const preferencesKey = 'prism-preferences';
-
-function PrismPlayMark() {
-  return (
-    <span className="play__mark" aria-hidden="true">
-      <span className="play__image-frame"><img src={prismPlayAsset} alt="" /></span>
-      <span className="play__glint" />
-    </span>
-  );
-}
 
 type SortMode = 'alphabetical' | 'random' | 'released';
 type PrismPreferences = {
@@ -163,7 +154,8 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
       className={className}
       data-letter={titleInitial(isAlbum ? item.artist || item.title : item.title)}
       style={style}
-      onPointerEnter={() => { if (item.type === 'Movie') playUiTone('hover'); }}
+      onPointerEnter={(event) => { if (event.pointerType !== 'touch') playUiTone('hover'); }}
+      onFocus={(event) => { if (event.currentTarget.matches(':focus-visible')) playUiTone('hover'); }}
       onClick={() => onSelect(item)}
       aria-label={`Open ${item.title}${item.artist ? ` by ${item.artist}` : ''}`}
     >{artwork}</button>
@@ -2007,7 +1999,7 @@ export default function App() {
             {selected.overview && <p className="overview">{selected.overview}</p>}
             {demo ? (
               <div className="inspect__actions">
-                <button className="play play--disabled" aria-label="Connect to play" onClick={() => alert('Connect Prism to your Jellyfin server to play your own media.')}><PrismPlayMark /><span className="play__label">CONNECT TO PLAY</span></button>
+                <PlayButton key={selected.id} reducedMotion={preferences.reducedMotion} ariaLabel="Connect to play" label="CONNECT TO PLAY" onPlay={() => alert('Connect Prism to your Jellyfin server to play your own media.')} />
                 <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span aria-hidden="true">•••</span></button>
               </div>
             ) : selected.type === 'Series' ? (
@@ -2044,7 +2036,7 @@ export default function App() {
             ) : (
               <div className="inspect__actions">
                 <div className="playback-actions">
-                  <button className="play" aria-label={`Play ${selected.title}`} onClick={() => { playUiTone('play'); setPlayingItem(selected); }}><PrismPlayMark /><span className="play__label">PLAY</span></button>
+                  <PlayButton key={selected.id} reducedMotion={preferences.reducedMotion} sound ariaLabel={`Play ${selected.title}`} onPlay={() => setPlayingItem(selected)} />
                   {playbackVersions.length > 1 && (
                     <label className="version-picker">
                       <span>VERSION</span>
