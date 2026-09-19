@@ -154,7 +154,8 @@ function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaIt
       className={className}
       data-letter={titleInitial(isAlbum ? item.artist || item.title : item.title)}
       style={style}
-      onPointerEnter={() => { if (item.type === 'Movie') playUiTone('hover'); }}
+      onPointerEnter={(event) => { if (event.pointerType !== 'touch') playUiTone('hover'); }}
+      onFocus={(event) => { if (event.currentTarget.matches(':focus-visible')) playUiTone('hover'); }}
       onClick={() => onSelect(item)}
       aria-label={`Open ${item.title}${item.artist ? ` by ${item.artist}` : ''}`}
     >{artwork}</button>

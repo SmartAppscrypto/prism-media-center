@@ -200,8 +200,8 @@ header:hover .header__tools, header:focus-within .header__tools { opacity: 1; tr
 /* The outline, triangle and release ring share one 68px control. */
 .play { display: flex; align-items: center; gap: 20px; padding: 8px; margin: -8px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; color: #fff; font: .72rem 'Space Mono'; letter-spacing: .36em; touch-action: manipulation; -webkit-tap-highlight-color: transparent; user-select: none; }
 .play:focus-visible { outline: 2px solid rgb(255 255 255 / .8); outline-offset: 6px; }
-.play__label { color: rgb(255 255 255 / .82); transition: color 100ms; }
-.play__mark { position: relative; width: 68px; height: 68px; flex: 0 0 68px; display: grid; place-items: center; border: 1.25px solid rgb(255 255 255 / .78); border-radius: 50%; opacity: .86; transition: transform 210ms cubic-bezier(.2,1.5,.4,1), opacity 120ms, border-color 120ms; }
+.play__label { color: rgb(255 255 255 / .82); transition: color 180ms, transform 220ms; }
+.play__mark { position: relative; width: 68px; height: 68px; flex: 0 0 68px; display: grid; place-items: center; border: 1.25px solid rgb(255 255 255 / .78); border-radius: 50%; opacity: .86; background: transparent; box-shadow: 0 0 0 rgb(255 255 255 / 0); transition: transform 210ms cubic-bezier(.2,1.5,.4,1), opacity 180ms, border-color 180ms, background 220ms, box-shadow 220ms; }
 .play__triangle { display: grid; place-items: center; transform: translateX(1px); transition: transform 210ms cubic-bezier(.2,1.5,.4,1); }
 .play__triangle svg { display: block; width: 24px; height: 24px; fill: currentColor; }
 .play--pressed:not(:disabled) .play__mark { transform: scale(.95); opacity: 1; border-color: #fff; transition-duration: 80ms; }
@@ -209,12 +209,20 @@ header:hover .header__tools, header:focus-within .header__tools { opacity: 1; tr
 .play--pressed .play__label { color: #fff; }
 .play__ring { position: absolute; inset: -1.25px; border: 1px solid #fff; border-radius: inherit; pointer-events: none; animation: play-release 220ms ease-out both; }
 @keyframes play-release { from { transform: scale(1); opacity: .3; } to { transform: scale(1.22); opacity: 0; } }
-@media (hover: hover) and (pointer: fine) { .play:hover:not(:disabled) .play__mark { opacity: 1; } }
+/* A single, integrated highlight for pointer hover and keyboard selection. */
+.play:focus-visible:not(:disabled):not(.play--pressed) .play__mark { transform: translateY(-1px) scale(1.045); opacity: 1; border-color: #fff; background: rgb(255 255 255 / .065); box-shadow: 0 0 22px rgb(255 255 255 / .12), inset 0 0 12px rgb(255 255 255 / .035); }
+.play:focus-visible:not(:disabled):not(.play--pressed) .play__triangle { transform: translateX(2.5px); }
+.play:focus-visible:not(:disabled) .play__label { color: #fff; transform: translateX(2px); }
+@media (hover: hover) and (pointer: fine) {
+  .play:hover:not(:disabled):not(.play--pressed) .play__mark { transform: translateY(-1px) scale(1.045); opacity: 1; border-color: #fff; background: rgb(255 255 255 / .065); box-shadow: 0 0 22px rgb(255 255 255 / .12), inset 0 0 12px rgb(255 255 255 / .035); }
+  .play:hover:not(:disabled):not(.play--pressed) .play__triangle { transform: translateX(2.5px); }
+  .play:hover:not(:disabled) .play__label { color: #fff; transform: translateX(2px); }
+}
 .play:disabled { opacity: .45; cursor: default; }
-.library--reduced-motion .play__mark, .library--reduced-motion .play__triangle { transform: none !important; transition: none; }
+.library--reduced-motion .play__mark, .library--reduced-motion .play__triangle, .library--reduced-motion .play__label { transform: none !important; transition: none; }
 .library--reduced-motion .play__ring { display: none; animation: none; }
 @media (prefers-reduced-motion: reduce) {
-  .play__mark, .play__triangle { transform: none !important; transition: none; }
+  .play__mark, .play__triangle, .play__label { transform: none !important; transition: none; }
   .play__ring { display: none; animation: none; }
 }
 .playback-actions { display: flex; align-items: center; gap: 42px; }
