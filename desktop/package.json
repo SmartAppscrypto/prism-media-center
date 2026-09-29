@@ -27,16 +27,16 @@
     "@types/node": "^26.1.2",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "cross-env": "latest",
-    "electron": "43.2.0",
+    "electron": "43.7.6",
     "electron-builder": "latest",
     "jsdom": "latest",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest",
-    "wait-on": "latest",
-    "@vitejs/plugin-react": "latest"
+    "wait-on": "latest"
   },
   "build": {
     "appId": "media.prism.desktop",
