@@ -223,6 +223,45 @@ header:hover .header__tools, header:focus-within .header__tools { opacity: 1; tr
 .more-trigger span { position: relative; font: 1rem/1 'Space Mono'; letter-spacing: .24em; transform: translateX(.12em) translateY(-.18em); }
 .more-trigger:hover, .more-trigger:focus-visible { color: #fff; transform: translateY(-2px); }
 .more-trigger:hover::before, .more-trigger:focus-visible::before { border-color: rgb(255 255 255 / .25); background: rgb(255 255 255 / .055); box-shadow: 0 0 24px rgb(120 205 255 / .09); }
+.inspect__secondary-actions { display: flex; align-items: center; gap: 18px; }
+.artwork-trigger { display: grid; grid-template-columns: 26px auto; align-items: center; gap: 9px; min-height: 38px; padding: 6px 12px; border: 1px solid rgb(255 255 255 / .12); border-radius: 999px; background: rgb(255 255 255 / .025); cursor: pointer; color: rgb(255 255 255 / .42); transition: color .25s, border-color .25s, background .25s, transform .25s; }
+.artwork-trigger > span { font: 1.15rem/1 'Instrument Serif'; }
+.artwork-trigger small { font: .46rem 'Space Mono'; letter-spacing: .18em; }
+.artwork-trigger:hover, .artwork-trigger:focus-visible { outline: none; color: #fff; border-color: rgb(255 255 255 / .48); background: rgb(255 255 255 / .07); transform: translateY(-2px); }
+
+.artwork-editor { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; padding: 5vh 5vw; }
+.artwork-editor__scrim { position: absolute; inset: 0; border: 0; background: rgb(0 0 0 / .76); backdrop-filter: blur(26px) saturate(80%); }
+.artwork-editor__panel { position: relative; width: min(1080px, 100%); max-height: 90vh; overflow: auto; padding: clamp(24px, 3.5vw, 48px); border: 1px solid rgb(255 255 255 / .14); border-radius: 12px; background: linear-gradient(145deg, rgb(19 24 29 / .98), rgb(5 6 8 / .99) 62%); box-shadow: 0 45px 140px rgb(0 0 0 / .86), inset 0 1px rgb(255 255 255 / .06); animation: details-in .35s ease both; }
+.artwork-editor__panel header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.artwork-editor__panel header small, .artwork-editor__intro, .artwork-editor__panel footer { font-family: 'Space Mono'; letter-spacing: .14em; }
+.artwork-editor__panel header small { color: rgb(255 255 255 / .35); font-size: .5rem; }
+.artwork-editor__panel header h2 { margin: 8px 0 0; font: 400 clamp(2.2rem, 4.5vw, 4.2rem)/.95 'Instrument Serif'; }
+.artwork-editor__panel header > button { width: 38px; height: 38px; padding: 0; border: 0; background: transparent; cursor: pointer; color: rgb(255 255 255 / .42); font-size: 1.8rem; }
+.artwork-editor__panel header > button:hover { color: #fff; }
+.artwork-editor__intro { max-width: 760px; margin: 20px 0 32px; color: rgb(255 255 255 / .43); font-size: .52rem; line-height: 1.8; }
+.artwork-editor__slots { display: grid; grid-template-columns: minmax(220px, .72fr) minmax(380px, 1.28fr); align-items: start; gap: clamp(20px, 3vw, 38px); }
+.artwork-slot { min-width: 0; display: grid; gap: 12px; cursor: pointer; color: rgb(255 255 255 / .38); font: .48rem 'Space Mono'; letter-spacing: .16em; transition: color .25s; }
+.artwork-slot > input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.artwork-slot__viewport { position: relative; display: grid; place-items: center; overflow: hidden; border: 1px dashed rgb(255 255 255 / .22); border-radius: 8px; background: radial-gradient(circle at 50% 35%, rgb(83 145 178 / .1), rgb(255 255 255 / .018) 55%, rgb(0 0 0 / .2)); transition: border-color .25s, box-shadow .25s, background .25s; }
+.artwork-slot--poster .artwork-slot__viewport { aspect-ratio: 2 / 3; max-height: 44vh; }
+.artwork-slot--backdrop .artwork-slot__viewport { aspect-ratio: 16 / 9; margin-top: clamp(0px, 5vh, 55px); }
+.artwork-slot__viewport img { width: 100%; height: 100%; display: block; object-fit: cover; transform-origin: center; }
+.artwork-slot__empty { display: grid; justify-items: center; gap: 7px; }
+.artwork-slot__empty b { color: rgb(255 255 255 / .6); font: 300 2rem 'Familjen Grotesk'; }
+.artwork-slot__empty strong { color: rgb(255 255 255 / .62); font-size: .58rem; }
+.artwork-slot__empty small { color: rgb(255 255 255 / .25); font-size: .44rem; }
+.artwork-slot:is(:hover, :focus-within, .is-dragging) { color: #fff; }
+.artwork-slot:is(:hover, :focus-within, .is-dragging) .artwork-slot__viewport { border-color: rgb(157 221 255 / .72); background-color: rgb(121 202 255 / .055); box-shadow: 0 0 40px rgb(91 194 255 / .1); }
+.artwork-slot__controls { display: grid; gap: 7px; padding-top: 2px; }
+.artwork-slot__controls > span { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 10px; }
+.artwork-slot__controls small { color: rgb(255 255 255 / .28); font-size: .4rem; }
+.artwork-slot__controls input { width: 100%; height: 2px; accent-color: #c9efff; cursor: ew-resize; }
+.artwork-editor__panel footer { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 32px; padding-top: 20px; border-top: 1px solid rgb(255 255 255 / .08); }
+.artwork-editor__panel footer > span { min-width: 0; margin-right: auto; color: rgb(190 229 245 / .64); font-size: .45rem; letter-spacing: .09em; }
+.artwork-editor__panel footer button { padding: 11px 16px; border: 1px solid rgb(255 255 255 / .14); border-radius: 3px; background: transparent; cursor: pointer; color: rgb(255 255 255 / .55); font: .48rem 'Space Mono'; letter-spacing: .16em; }
+.artwork-editor__panel footer .artwork-editor__save { border-color: rgb(193 234 255 / .52); background: rgb(177 226 255 / .1); color: #fff; }
+.artwork-editor__panel footer button:disabled { opacity: .32; cursor: default; }
+@media (max-width: 760px) { .artwork-editor__slots { grid-template-columns: 1fr; } .artwork-slot--poster .artwork-slot__viewport { width: min(250px, 70vw); justify-self: center; } .artwork-slot--backdrop .artwork-slot__viewport { margin-top: 0; } }
 .version-picker { position: relative; display: grid; gap: 8px; min-width: 190px; color: rgb(255 255 255 / .48); font: .58rem 'Space Mono'; letter-spacing: .2em; }
 .version-picker > span { font: inherit; }
 .version-picker select { width: 100%; padding: 12px 38px 12px 14px; border: 1px solid rgb(255 255 255 / .2); border-radius: 2px; color: #f5f3ef; background: rgb(8 9 11 / .72); backdrop-filter: blur(18px); cursor: pointer; font: .66rem 'Space Mono'; letter-spacing: .08em; appearance: auto; }
@@ -453,3 +492,8 @@ html:has(.player--native), body:has(.player--native), #root:has(.player--native)
 @media (max-width: 1100px) { .library--grid-cinematic .wall { grid-template-columns: repeat(4, minmax(145px, 1fr)); } .library--grid-comfortable .wall { grid-template-columns: repeat(5, minmax(130px, 1fr)); } .library--grid-compact .wall { grid-template-columns: repeat(6, minmax(110px, 1fr)); } .library--music.library--grid-cinematic .wall { grid-template-columns: repeat(4, minmax(150px, 1fr)); } .library--music.library--grid-comfortable .wall { grid-template-columns: repeat(5, minmax(130px, 1fr)); } .library--music.library--grid-compact .wall { grid-template-columns: repeat(6, minmax(110px, 1fr)); } .inspect:not(.inspect--more) { gap: 5vw; padding-inline: 5vw; } .crew-list { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 720px) { .more-page__hero, .more-page__body, .more-page__status { padding-inline: 28px; } .more-page__hero .reshelve { left: 28px; } .financial-grid, .crew-list, .production-spec-list, .album-artwork-pair { grid-template-columns: 1fr; } .inspect__actions { align-items: flex-start; flex-direction: column; } .album-player-shell { gap: 4px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Keep the playback title area draggable above both video surfaces. */
+.player__drag-region { z-index: 50; cursor: move; }
+.gallery-action { flex-shrink: 0; border: 1px solid rgb(255 255 255 / .24); padding: 8px 10px; background: rgb(0 0 0 / .4); color: #fff; cursor: pointer; font: .65rem 'Space Mono'; }
+.gallery-action:focus-visible { outline: 2px solid #a9f5ff; outline-offset: 3px; }

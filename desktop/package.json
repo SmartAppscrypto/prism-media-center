@@ -2,7 +2,7 @@
   "name": "@prism/desktop",
   "private": true,
   "type": "module",
-  "version": "0.14.2",
+  "version": "0.15.0",
   "description": "Prism desktop media client",
   "author": "Prism Media",
   "main": "electron/main.cjs",
@@ -56,7 +56,13 @@
       {
         "from": "vendor/vlc",
         "to": "vlc",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "legal",
+        "to": "licenses"
       }
     ],
     "mac": {

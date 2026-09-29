@@ -10,3 +10,8 @@ server/cache/
 .repos/
 desktop/electron/native/build/
 desktop/vendor/vlc/
+
+server/media/
+tmp/
+ios/.build/
+ios/Prism.xcodeproj/

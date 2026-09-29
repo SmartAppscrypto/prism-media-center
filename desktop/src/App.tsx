@@ -2,7 +2,7 @@ import { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPo
 import { createPortal } from 'react-dom';
 import Hls from 'hls.js';
 import { demoItems } from './demoData';
-import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl } from './jellyfin';
+import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getAllAudioTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackDetails, getPlaybackVersions, getSeriesEpisodes, getSimilarItems, getViews, searchRemoteSubtitles, signIn, subtitleUrl, uploadHomeVideoArtwork } from './jellyfin';
 import prismPlayAsset from './prismPlayAsset';
 import type { AlbumMetadata, LibraryView, LyricsScanProgress, MediaDetails, MediaItem, MediaPerson, PlaybackDetails, PrismSession, ProductionDetails, ProductionFacetKey, ProductionScanProgress, RemoteSubtitle, SubtitleTrack, TrackLyrics } from './types';
 import { compareArtistsThenTitles, compareTitles, titleInitial } from './sorting';
@@ -193,6 +193,126 @@ function AlbumArtwork({ item, metadata }: { item: MediaItem; metadata: AlbumMeta
       </span>
       <span className="album-artwork-flip__hint">FLIP COVER</span>
     </button>
+  );
+}
+
+type ArtworkKind = 'poster' | 'backdrop';
+type ArtworkDraft = { file: File; previewUrl: string; zoom: number; x: number; y: number };
+
+function normalizeArtwork(draft: ArtworkDraft, kind: ArtworkKind): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const [width, height] = kind === 'poster' ? [1200, 1800] : [1920, 1080];
+      const targetRatio = width / height;
+      let cropWidth = image.naturalWidth;
+      let cropHeight = image.naturalHeight;
+      if (cropWidth / cropHeight > targetRatio) cropWidth = cropHeight * targetRatio;
+      else cropHeight = cropWidth / targetRatio;
+      cropWidth /= draft.zoom;
+      cropHeight /= draft.zoom;
+      const sourceX = Math.max(0, (image.naturalWidth - cropWidth) * (draft.x / 100));
+      const sourceY = Math.max(0, (image.naturalHeight - cropHeight) * (draft.y / 100));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (!context) { reject(new Error('This computer could not prepare the artwork.')); return; }
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+      context.drawImage(image, sourceX, sourceY, cropWidth, cropHeight, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', .9));
+    };
+    image.onerror = () => reject(new Error('That image could not be decoded.'));
+    image.src = draft.previewUrl;
+  });
+}
+
+function ArtworkEditor({ item, onClose, onSave }: {
+  item: MediaItem;
+  onClose: () => void;
+  onSave: (kind: ArtworkKind, dataUrl: string) => Promise<void>;
+}) {
+  const [drafts, setDrafts] = useState<Partial<Record<ArtworkKind, ArtworkDraft>>>({});
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState('');
+  const previewUrls = useRef<string[]>([]);
+
+  useEffect(() => () => previewUrls.current.forEach((url) => URL.revokeObjectURL(url)), []);
+
+  function choose(kind: ArtworkKind, file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setStatus('Choose a JPEG, PNG, WebP, or another image file.'); return; }
+    if (file.size > 25 * 1024 * 1024) { setStatus('Artwork must be smaller than 25 MB.'); return; }
+    setStatus('');
+    setDrafts((current) => {
+      const old = current[kind];
+      if (old) URL.revokeObjectURL(old.previewUrl);
+      const previewUrl = URL.createObjectURL(file);
+      previewUrls.current.push(previewUrl);
+      return { ...current, [kind]: { file, previewUrl, zoom: 1, x: 50, y: 50 } };
+    });
+  }
+
+  function update(kind: ArtworkKind, values: Partial<ArtworkDraft>) {
+    setDrafts((current) => current[kind] ? { ...current, [kind]: { ...current[kind]!, ...values } } : current);
+  }
+
+  async function save() {
+    const entries = Object.entries(drafts) as Array<[ArtworkKind, ArtworkDraft]>;
+    if (!entries.length) { setStatus('Drop a poster or background image first.'); return; }
+    setSaving(true);
+    setStatus('PREPARING ARTWORK…');
+    try {
+      for (const [kind, draft] of entries) {
+        const dataUrl = await normalizeArtwork(draft, kind);
+        setStatus(`SAVING ${kind.toUpperCase()}…`);
+        await onSave(kind, dataUrl);
+      }
+      setStatus('ARTWORK SAVED');
+      window.setTimeout(onClose, 650);
+    } catch (reason) {
+      setStatus(reason instanceof Error ? reason.message : 'Artwork could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return createPortal(
+    <div className="artwork-editor" role="dialog" aria-modal="true" aria-labelledby="artwork-title">
+      <button className="artwork-editor__scrim" onClick={saving ? undefined : onClose} aria-label="Close artwork editor" />
+      <section className="artwork-editor__panel">
+        <header><div><small>HOME VIDEO ARTWORK</small><h2 id="artwork-title">{item.title}</h2></div><button onClick={onClose} disabled={saving} aria-label="Close">×</button></header>
+        <p className="artwork-editor__intro">Drop images below. PRISM crops them locally, stores durable sidecars beside the video on your Synology, and keeps the previous revision.</p>
+        <div className="artwork-editor__slots">
+          {(['poster', 'backdrop'] as const).map((kind) => {
+            const draft = drafts[kind];
+            return (
+              <label
+                key={kind}
+                className={`artwork-slot artwork-slot--${kind} ${draft ? 'has-image' : ''}`}
+                onDragOver={(event) => { event.preventDefault(); event.currentTarget.classList.add('is-dragging'); }}
+                onDragLeave={(event) => event.currentTarget.classList.remove('is-dragging')}
+                onDrop={(event) => { event.preventDefault(); event.currentTarget.classList.remove('is-dragging'); choose(kind, event.dataTransfer.files[0]); }}
+              >
+                <input type="file" accept="image/*" onChange={(event) => choose(kind, event.target.files?.[0])} disabled={saving} />
+                <span className="artwork-slot__viewport">
+                  {draft ? <img src={draft.previewUrl} alt="" style={{ objectPosition: `${draft.x}% ${draft.y}%`, transform: `scale(${draft.zoom})` }} /> : <span className="artwork-slot__empty"><b>＋</b><strong>{kind === 'poster' ? 'POSTER' : 'BACKGROUND'}</strong><small>{kind === 'poster' ? '2:3 portrait' : '16:9 landscape'}</small></span>}
+                </span>
+                <strong>{draft ? 'REPLACE IMAGE' : 'DROP OR CHOOSE IMAGE'}</strong>
+                {draft && <span className="artwork-slot__controls" onClick={(event) => event.preventDefault()}>
+                  <span><small>ZOOM</small><input aria-label={`${kind} zoom`} type="range" min="1" max="2" step=".01" value={draft.zoom} onChange={(event) => update(kind, { zoom: Number(event.target.value) })} /></span>
+                  <span><small>HORIZONTAL</small><input aria-label={`${kind} horizontal crop`} type="range" min="0" max="100" value={draft.x} onChange={(event) => update(kind, { x: Number(event.target.value) })} /></span>
+                  <span><small>VERTICAL</small><input aria-label={`${kind} vertical crop`} type="range" min="0" max="100" value={draft.y} onChange={(event) => update(kind, { y: Number(event.target.value) })} /></span>
+                </span>}
+              </label>
+            );
+          })}
+        </div>
+        <footer><span role="status">{status}</span><button onClick={onClose} disabled={saving}>CANCEL</button><button className="artwork-editor__save" onClick={() => void save()} disabled={saving || !Object.keys(drafts).length}>{saving ? 'SAVING…' : 'SAVE ARTWORK'}</button></footer>
+      </section>
+    </div>,
+    document.body
   );
 }
 
@@ -909,7 +1029,7 @@ function AlbumMoreDetails({
 }
 
 function Connect({ onConnected, onDemo }: { onConnected: (session: PrismSession) => void; onDemo: () => void }) {
-  const [serverUrl, setServerUrl] = useState('http://192.168.1.10:8096');
+  const [serverUrl, setServerUrl] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -936,7 +1056,7 @@ function Connect({ onConnected, onDemo }: { onConnected: (session: PrismSession)
         <p>Your films stay on your NAS. Prism turns them into a room worth wandering through.</p>
       </section>
       <form className="connect__form" onSubmit={submit}>
-        <label>Server address<input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} required /></label>
+        <label>Server address<input value={serverUrl} placeholder="http://localhost:8096" onChange={(event) => setServerUrl(event.target.value)} required /></label>
         <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required /></label>
         <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
         {error && <p className="form-error" role="alert">{error}</p>}
@@ -947,7 +1067,7 @@ function Connect({ onConnected, onDemo }: { onConnected: (session: PrismSession)
   );
 }
 
-function Player({ item, session, preferences, mediaSourceId: preferredMediaSourceId, onPreferencesChange, onClose }: { item: MediaItem; session: PrismSession; preferences: PrismPreferences; mediaSourceId?: string; onPreferencesChange: (patch: Partial<PrismPreferences>) => void; onClose: () => void }) {
+export function Player({ item, session, preferences, mediaSourceId: preferredMediaSourceId, onPreferencesChange, onClose }: { item: MediaItem; session: PrismSession; preferences: PrismPreferences; mediaSourceId?: string; onPreferencesChange: (patch: Partial<PrismPreferences>) => void; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const idleTimerRef = useRef<number | undefined>(undefined);
   const nativeModeRef = useRef(false);
@@ -1260,6 +1380,8 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
       onMouseDown={revealChrome}
       onTouchStart={revealChrome}
     >
+      <div className="window-drag-region player__drag-region" aria-hidden="true" {...windowDragProps()} />
+      <WindowControls />
       <video
         ref={videoRef}
         className={nativeMode ? 'player__html-video--hidden' : ''}
@@ -1320,8 +1442,12 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
           }}
           aria-label="Playback position"
         />
-        <span className="player__time">{formatClock(duration)}</span>
-        {window.prismWindow?.platform === 'win32' && <button onClick={() => window.prismWindow?.toggleFullscreen()} aria-label="Toggle full screen">FULL</button>}
+        <span className="player__time" aria-label="Time remaining">{Number.isFinite(duration) && duration > 0 ? `−${formatClock(Math.max(0, duration - currentTime))} left` : "—"}</span>
+        <button onClick={() => {
+          if (window.prismWindow) window.prismWindow.toggleFullscreen();
+          else if (document.fullscreenElement) void document.exitFullscreen();
+          else void document.documentElement.requestFullscreen?.();
+        }} aria-label="Toggle full screen" title="Full screen (F)">⛶ FULL</button>
         <button
           onClick={() => {
             if (nativeModeRef.current) {
@@ -1405,11 +1531,22 @@ function Player({ item, session, preferences, mediaSourceId: preferredMediaSourc
 
 export default function App() {
   const [session, setSession] = useState<PrismSession | null>(() => {
+    if (window.prismSession) return null;
     const stored = localStorage.getItem(sessionKey);
     if (!stored) return null;
     try { return JSON.parse(stored) as PrismSession; }
     catch { localStorage.removeItem(sessionKey); return null; }
   });
+  const [sessionReady, setSessionReady] = useState(!window.prismSession);
+  useEffect(() => {
+    if (!window.prismSession) return;
+    let cancelled = false;
+    // Old plaintext sessions are deliberately removed; sign in again to migrate safely.
+    localStorage.removeItem(sessionKey);
+    void window.prismSession.load().then((value) => { if (!cancelled) setSession(value); })
+      .catch(() => undefined).finally(() => { if (!cancelled) setSessionReady(true); });
+    return () => { cancelled = true; };
+  }, []);
   const [demo, setDemo] = useState(false);
   const [preferences, setPreferences] = useState<PrismPreferences>(loadPreferences);
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -1424,6 +1561,7 @@ export default function App() {
   const [playbackVersions, setPlaybackVersions] = useState<PlaybackDetails[]>([]);
   const [selectedMediaSourceId, setSelectedMediaSourceId] = useState<string | undefined>();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [artworkEditorOpen, setArtworkEditorOpen] = useState(false);
   const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(null);
   const [productionDetails, setProductionDetails] = useState<ProductionDetails | null>(null);
   const [similarItems, setSimilarItems] = useState<MediaItem[]>([]);
@@ -1651,7 +1789,8 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
-    localStorage.setItem(sessionKey, JSON.stringify(session));
+    if (window.prismSession) void window.prismSession.save(session).catch(() => undefined);
+    else localStorage.setItem(sessionKey, JSON.stringify(session));
     getViews(session).then(async (serverViews) => {
       const ordered = orderLibraryViews(serverViews, preferences.libraryOrder);
       const firstVisible = ordered.find((view) => !preferences.hiddenLibraryIds.includes(view.id));
@@ -1720,6 +1859,14 @@ export default function App() {
     updatePreferences({ hiddenLibraryIds: hidden });
   }
 
+  function backToGalleryTop() {
+    setSelected(null);
+    setMoreOpen(false);
+    setMenuOpen(false);
+    wallRef.current?.scrollTo({ top: 0, behavior: preferences.reducedMotion ? 'instant' : 'smooth' });
+    wallRef.current?.querySelector<HTMLButtonElement>('button.poster')?.focus({ preventScroll: true });
+  }
+
   function focusFirstPosterForLetter(letter: string) {
     setSortMode('alphabetical');
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
@@ -1732,6 +1879,11 @@ export default function App() {
   function navigatePosterGrid(event: ReactKeyboardEvent<HTMLElement>) {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     setLibraryInputMode('keyboard');
+    if (event.key === 'Home') {
+      event.preventDefault();
+      backToGalleryTop();
+      return;
+    }
     const posters = Array.from(wallRef.current?.querySelectorAll<HTMLButtonElement>('button.poster') ?? []);
     const current = posters.indexOf(event.target as HTMLButtonElement);
     if (!posters.length) return;
@@ -1747,7 +1899,12 @@ export default function App() {
     }
     const columnCount = Math.max(1, getComputedStyle(event.currentTarget).gridTemplateColumns.split(' ').length);
     const offsets: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columnCount, ArrowDown: columnCount };
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? posters.length - 1 : current + offsets[event.key];
+    if (event.key === 'ArrowUp' && current < columnCount) {
+      event.preventDefault();
+      document.getElementById('gallery-top')?.focus({ preventScroll: true });
+      return;
+    }
+    const next = event.key === 'End' ? posters.length - 1 : current + offsets[event.key];
     if (next < 0 || next >= posters.length) return;
     event.preventDefault();
     posters[next].focus();
@@ -1773,6 +1930,7 @@ export default function App() {
   }
 
   function disconnect() {
+    void window.prismSession?.clear();
     localStorage.removeItem(sessionKey);
     setSession(null);
     setDemo(false);
@@ -1780,9 +1938,20 @@ export default function App() {
     setSelected(null);
   }
 
+  async function saveHomeVideoArtwork(kind: ArtworkKind, dataUrl: string) {
+    if (!selected || !session) throw new Error('Reconnect to PRISM Server before saving artwork.');
+    const result = await uploadHomeVideoArtwork(selected, session, kind, dataUrl);
+    const imageUrl = `${session.serverUrl}/Items/${selected.id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
+    const backdropUrl = `${session.serverUrl}/Items/${selected.id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
+    const patch = kind === 'poster' ? { imageUrl } : { backdropUrl };
+    setItems((current) => current.map((item) => item.id === selected.id ? { ...item, ...patch } : item));
+    setSelected((current) => current?.id === selected.id ? { ...current, ...patch } : current);
+  }
+
   const dragRegion = <div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />;
   const windowControls = <WindowControls />;
 
+  if (!sessionReady) return <main className="connect">Opening PRISM…</main>;
   if (!session && !demo) return <>{dragRegion}{windowControls}<Connect onConnected={setSession} onDemo={() => setDemo(true)} /></>;
   if (playingItem && session) return <Player item={playingItem} session={session} preferences={preferences} mediaSourceId={playingItem.id === selected?.id ? selectedMediaSourceId : undefined} onPreferencesChange={updatePreferences} onClose={() => setPlayingItem(null)} />;
 
@@ -1793,9 +1962,17 @@ export default function App() {
       <header {...windowDragProps()}>
         <div className="header__brand">
           {!demo && <button className="menu-trigger" onClick={() => { playUiTone('panel'); setDrawerPage('libraries'); setMenuOpen(true); }} aria-label="Open library menu"><span /><span /><span /></button>}
-          <button className="wordmark" onClick={() => setSelected(null)}>PRISM</button>
+          <button className="wordmark" onClick={backToGalleryTop} title="Back to gallery top">PRISM</button>
         </div>
         <div className="header__tools" aria-label="Library navigation">
+          <button id="gallery-top" className="gallery-action" onClick={backToGalleryTop} onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') { event.preventDefault(); backToGalleryTop(); }
+          }} aria-label="Back to top">↑ TOP</button>
+          {sortMode === 'random' && <button className="gallery-action" onClick={(event) => {
+            setRandomNonce((nonce) => nonce + 1);
+            backToGalleryTop();
+            event.currentTarget.focus({ preventScroll: true });
+          }} aria-label="Refresh random sorting">↻ REFRESH</button>}
           <nav className="alphabet-rail" aria-label="Jump by title">
             {'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((letter) => (
               <button key={letter} disabled={!availableLetters.has(letter)} onClick={() => focusFirstPosterForLetter(letter)} aria-label={`Jump to ${letter}`}>{letter}</button>
@@ -1826,7 +2003,7 @@ export default function App() {
           <button className={`drawer-scrim ${menuOpen ? 'is-open' : ''}`} onClick={() => setMenuOpen(false)} aria-label="Close library menu" />
           <aside className={`library-drawer ${menuOpen ? 'is-open' : ''}`} aria-hidden={!menuOpen}>
             <div className="library-drawer__top">
-              <span>PRISM</span>
+              <button className="wordmark" onClick={backToGalleryTop} title="Back to gallery top">PRISM</button>
               <div className="library-drawer__actions">
                 <button
                   className="settings-trigger"
@@ -2056,13 +2233,16 @@ export default function App() {
                     </label>
                   )}
                 </div>
-                <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span aria-hidden="true">•••</span></button>
+                <span className="inspect__secondary-actions">
+                  {activeView?.collectionType === 'homevideos' && selected.type === 'Video' && <button className="artwork-trigger" onClick={() => setArtworkEditorOpen(true)} aria-label={`Edit artwork for ${selected.title}`}><span aria-hidden="true">▧</span><small>ARTWORK</small></button>}
+                  <button className="more-trigger" onClick={() => setMoreOpen(true)} aria-label={`More about ${selected.title}`}><span aria-hidden="true">•••</span></button>
+                </span>
               </div>
             )}
             </article>
           </>}
         </section>
       )}
-    </main></>
+    </main>{artworkEditorOpen && selected && <ArtworkEditor item={selected} onClose={() => setArtworkEditorOpen(false)} onSave={saveHomeVideoArtwork} />}</>
   );
 }

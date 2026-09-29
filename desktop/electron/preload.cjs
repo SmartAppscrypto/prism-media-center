@@ -39,3 +39,9 @@ contextBridge.exposeInMainWorld('prismNativePlayer', {
   disableSubtitles: () => ipcRenderer.invoke('prism-native-subtitle-off'),
   stop: () => ipcRenderer.invoke('prism-native-stop')
 });
+
+contextBridge.exposeInMainWorld('prismSession', {
+  load: () => ipcRenderer.invoke('prism-session-load'),
+  save: (value) => ipcRenderer.invoke('prism-session-save', value),
+  clear: () => ipcRenderer.invoke('prism-session-clear')
+});

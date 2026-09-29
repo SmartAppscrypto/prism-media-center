@@ -1,0 +1,23 @@
+name: Prism
+options:
+  bundleIdPrefix: media.prism
+  deploymentTarget:
+    iOS: '27.1'
+targets:
+  Prism:
+    type: application
+    platform: iOS
+    sources: [Prism]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.ios
+        SWIFT_VERSION: '6.0'
+        TARGETED_DEVICE_FAMILY: '1,2'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Prism/Info.plist
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to your own PRISM or Jellyfin server on your home network.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortraitUpsideDown
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortraitUpsideDown

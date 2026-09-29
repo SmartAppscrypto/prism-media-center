@@ -12,7 +12,8 @@
     "test": "npm --workspace desktop run test",
     "desktop": "npm --workspace desktop run desktop",
     "package:mac": "npm --workspace desktop run package:mac",
-    "package:windows": "npm --workspace desktop run package:windows"
+    "package:windows": "npm --workspace desktop run package:windows",
+    "test:security": "node --test tests/*.test.cjs tests/*.test.mjs"
   },
   "engines": {
     "node": ">=22"

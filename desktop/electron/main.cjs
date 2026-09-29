@@ -4,6 +4,21 @@ const fsSync = require('node:fs');
 const path = require('node:path');
 const { findShotOnWhatPage, slugify } = require('./shotonwhat.cjs');
 
+const { trustedPage, trustedSender } = require('./security.cjs');
+const appFile = path.join(__dirname, '..', 'dist', 'index.html');
+const devServer = app.isPackaged ? undefined : process.env.VITE_DEV_SERVER_URL;
+function handle(channel, callback) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!trustedSender(event, appFile, devServer)) throw new Error('Untrusted IPC sender.');
+    return callback(event, ...args);
+  });
+}
+function listen(channel, callback) {
+  ipcMain.on(channel, (event, ...args) => {
+    if (trustedSender(event, appFile, devServer)) callback(event, ...args);
+  });
+}
+
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const windowDrags = new Map();
@@ -97,9 +112,40 @@ function tmdbRequest(pathname, token) {
   return fetch(url, { headers });
 }
 
-ipcMain.handle('prism-tmdb-status', async () => Boolean(await readTmdbToken()));
+let memorySession = null;
+let sessionWrites = Promise.resolve();
+function validSession(value) {
+  if (!value || !['serverUrl', 'accessToken', 'userId', 'username'].every((key) => typeof value[key] === 'string' && value[key].length <= 8192)) return false;
+  try { const url = new URL(value.serverUrl); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; }
+  catch { return false; }
+}
+handle('prism-session-load', async () => {
+  if (memorySession) return memorySession;
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try {
+    const stored = await readJson('prism-session.json', {});
+    const value = JSON.parse(safeStorage.decryptString(Buffer.from(stored.encrypted, 'base64')));
+    return validSession(value) ? value : null;
+  } catch { return null; }
+});
+handle('prism-session-save', async (_event, value) => {
+  if (!validSession(value)) throw new Error('Invalid session.');
+  memorySession = value;
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  const encrypted = safeStorage.encryptString(JSON.stringify(value)).toString('base64');
+  sessionWrites = sessionWrites.catch(() => undefined).then(() => writeJson('prism-session.json', { encrypted }));
+  await sessionWrites;
+  return true;
+});
+handle('prism-session-clear', async () => {
+  memorySession = null;
+  sessionWrites = sessionWrites.catch(() => undefined).then(() => fs.rm(prismDataPath('prism-session.json'), { force: true }));
+  await sessionWrites;
+});
 
-ipcMain.handle('prism-tmdb-save', async (_event, rawToken) => {
+handle('prism-tmdb-status', async () => Boolean(await readTmdbToken()));
+
+handle('prism-tmdb-save', async (_event, rawToken) => {
   const token = typeof rawToken === 'string' ? rawToken.trim() : '';
   if (!token) return { ok: false, error: 'Enter a TMDb token.' };
   if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Secure storage is not available on this Mac.' };
@@ -113,12 +159,12 @@ ipcMain.handle('prism-tmdb-save', async (_event, rawToken) => {
   }
 });
 
-ipcMain.handle('prism-tmdb-clear', async () => {
+handle('prism-tmdb-clear', async () => {
   await writeJson('prism-secrets.json', {});
   return true;
 });
 
-ipcMain.handle('prism-tmdb-movie', async (_event, identifiers) => {
+handle('prism-tmdb-movie', async (_event, identifiers) => {
   const token = await readTmdbToken();
   if (!token) return null;
   const tmdbId = typeof identifiers?.tmdbId === 'string' ? identifiers.tmdbId : '';
@@ -153,12 +199,12 @@ ipcMain.handle('prism-tmdb-movie', async (_event, identifiers) => {
   }
 });
 
-ipcMain.handle('prism-production-get', async (_event, item) => {
+handle('prism-production-get', async (_event, item) => {
   try { return await lookupProduction(item, Boolean(item?.scrapeIfMissing)); }
   catch { return null; }
 });
 
-ipcMain.handle('prism-production-find', async (_event, query) => {
+handle('prism-production-find', async (_event, query) => {
   const field = typeof query?.field === 'string' && productionFacetFields.has(query.field) ? query.field : '';
   const value = typeof query?.value === 'string' ? query.value.trim().toLocaleLowerCase() : '';
   if (!field || !value || !Array.isArray(query?.items)) return [];
@@ -170,7 +216,7 @@ ipcMain.handle('prism-production-find', async (_event, query) => {
   }).map((item) => item.id);
 });
 
-ipcMain.handle('prism-production-scan', async (event, rawItems) => {
+handle('prism-production-scan', async (event, rawItems) => {
   if (productionScanRunning) return { ok: false, error: 'A production scan is already running.' };
   const items = Array.isArray(rawItems) ? rawItems
     .filter((item) => productionKey(item))
@@ -208,7 +254,7 @@ ipcMain.handle('prism-production-scan', async (event, rawItems) => {
   }
 });
 
-ipcMain.handle('prism-native-status', (event) => {
+handle('prism-native-status', (event) => {
   const bridge = getNativePlayer();
   const runtime = nativePlayerPaths();
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -218,7 +264,7 @@ ipcMain.handle('prism-native-status', (event) => {
   };
 });
 
-ipcMain.handle('prism-native-start', (event, mediaUrl, subtitleStyle) => {
+handle('prism-native-start', (event, mediaUrl, subtitleStyle) => {
   const bridge = getNativePlayer();
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!bridge || !window || typeof mediaUrl !== 'string') return { ok: false, error: 'The native player is not available.' };
@@ -242,28 +288,28 @@ ipcMain.handle('prism-native-start', (event, mediaUrl, subtitleStyle) => {
   return error ? { ok: false, error } : { ok: true };
 });
 
-ipcMain.handle('prism-native-state', () => getNativePlayer()?.state() ?? { active: false, error: true, message: 'The native player is unavailable.' });
-ipcMain.handle('prism-native-pause', (_event, paused) => Boolean(getNativePlayer()?.setPaused(Boolean(paused))));
-ipcMain.handle('prism-native-seek', (_event, milliseconds) => Number.isFinite(milliseconds) && Boolean(getNativePlayer()?.setTime(Math.max(0, Math.round(milliseconds)))));
-ipcMain.handle('prism-native-volume', (_event, volume) => Number.isFinite(volume) && Boolean(getNativePlayer()?.setVolume(Math.round(Math.max(0, Math.min(1.25, volume)) * 100))));
-ipcMain.handle('prism-native-subtitle-add', (_event, subtitleUrl) => {
+handle('prism-native-state', () => getNativePlayer()?.state() ?? { active: false, error: true, message: 'The native player is unavailable.' });
+handle('prism-native-pause', (_event, paused) => Boolean(getNativePlayer()?.setPaused(Boolean(paused))));
+handle('prism-native-seek', (_event, milliseconds) => Number.isFinite(milliseconds) && Boolean(getNativePlayer()?.setTime(Math.max(0, Math.round(milliseconds)))));
+handle('prism-native-volume', (_event, volume) => Number.isFinite(volume) && Boolean(getNativePlayer()?.setVolume(Math.round(Math.max(0, Math.min(1.25, volume)) * 100))));
+handle('prism-native-subtitle-add', (_event, subtitleUrl) => {
   if (typeof subtitleUrl !== 'string') return false;
   try {
     const parsed = new URL(subtitleUrl);
     return ['http:', 'https:'].includes(parsed.protocol) && Boolean(getNativePlayer()?.addSubtitle(parsed.toString()));
   } catch { return false; }
 });
-ipcMain.handle('prism-native-subtitle-select', (_event, track) => Number.isInteger(track) && track >= 0 && Boolean(getNativePlayer()?.selectSubtitle(track)));
-ipcMain.handle('prism-native-subtitle-off', () => Boolean(getNativePlayer()?.disableSubtitles()));
-ipcMain.handle('prism-native-stop', () => { getNativePlayer()?.stop(); return true; });
+handle('prism-native-subtitle-select', (_event, track) => Number.isInteger(track) && track >= 0 && Boolean(getNativePlayer()?.selectSubtitle(track)));
+handle('prism-native-subtitle-off', () => Boolean(getNativePlayer()?.disableSubtitles()));
+handle('prism-native-stop', () => { getNativePlayer()?.stop(); return true; });
 
-ipcMain.on('prism-window-drag-start', (event, point) => {
+listen('prism-window-drag-start', (event, point) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
   windowDrags.set(event.sender.id, { window, pointer: point, bounds: window.getBounds() });
 });
 
-ipcMain.on('prism-window-drag-move', (event, point) => {
+listen('prism-window-drag-move', (event, point) => {
   const drag = windowDrags.get(event.sender.id);
   if (!drag || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
   drag.window.setPosition(
@@ -273,20 +319,20 @@ ipcMain.on('prism-window-drag-move', (event, point) => {
   );
 });
 
-ipcMain.on('prism-window-drag-end', (event) => windowDrags.delete(event.sender.id));
-ipcMain.on('prism-window-minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
-ipcMain.on('prism-window-toggle-maximize', (event) => {
+listen('prism-window-drag-end', (event) => windowDrags.delete(event.sender.id));
+listen('prism-window-minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
+listen('prism-window-toggle-maximize', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window) return;
   if (window.isMaximized()) window.unmaximize();
   else window.maximize();
 });
-ipcMain.on('prism-window-set-fullscreen', (event, enabled) => BrowserWindow.fromWebContents(event.sender)?.setFullScreen(Boolean(enabled)));
-ipcMain.on('prism-window-toggle-fullscreen', (event) => {
+listen('prism-window-set-fullscreen', (event, enabled) => BrowserWindow.fromWebContents(event.sender)?.setFullScreen(Boolean(enabled)));
+listen('prism-window-toggle-fullscreen', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (window) window.setFullScreen(!window.isFullScreen());
 });
-ipcMain.on('prism-window-close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
+listen('prism-window-close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
 
 function createWindow() {
   const isWindows = process.platform === 'win32';
@@ -310,12 +356,20 @@ function createWindow() {
     }
   });
 
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!trustedPage(url, appFile, devServer)) event.preventDefault();
+  });
+  window.webContents.on('will-redirect', (event, url) => {
+    if (!trustedPage(url, appFile, devServer)) event.preventDefault();
+  });
+  window.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  window.webContents.session.setPermissionCheckHandler(() => false);
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  const devServer = process.env.VITE_DEV_SERVER_URL;
   if (devServer) {
     window.loadURL(devServer);
   } else {

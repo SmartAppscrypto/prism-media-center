@@ -4,6 +4,11 @@ export {};
 
 declare global {
   interface Window {
+    prismSession?: {
+      load: () => Promise<import('./types').PrismSession | null>;
+      save: (value: import('./types').PrismSession) => Promise<boolean>;
+      clear: () => Promise<void>;
+    };
     prismWindow?: {
       platform: string;
       startDrag: (x: number, y: number) => void;

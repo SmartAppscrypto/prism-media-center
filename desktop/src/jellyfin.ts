@@ -3,7 +3,11 @@ import type { LibraryView, MediaDetails, MediaItem, MediaPerson, PlaybackDetails
 const deviceIdKey = 'prism-device-id';
 
 function normalizedUrl(value: string) {
-  return value.trim().replace(/\/+$/, '');
+  const url = new URL(value.trim());
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error('Enter an HTTP or HTTPS server address without credentials, query parameters, or fragments.');
+  }
+  return url.toString().replace(/\/+$/, '');
 }
 
 function deviceId() {
@@ -20,15 +24,22 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.14.1"`
+    `Version="0.14.3"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
 }
 
+function artworkServiceUrl(serverUrl: string) {
+  const url = new URL(normalizedUrl(serverUrl));
+  url.port = '8097';
+  return url.toString().replace(/\/$/, '');
+}
+
 async function api<T>(serverUrl: string, path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const response = await fetch(`${normalizedUrl(serverUrl)}${path}`, {
     ...init,
+    redirect: 'error',
     headers: {
       Accept: 'application/json',
       Authorization: authorization(token),
@@ -55,6 +66,31 @@ export async function signIn(serverUrl: string, username: string, password: stri
     userId: result.User.Id,
     username: result.User.Name
   };
+}
+
+export async function uploadHomeVideoArtwork(
+  item: MediaItem,
+  session: PrismSession,
+  imageType: 'poster' | 'backdrop',
+  dataUrl: string
+): Promise<{ updatedAt: number }> {
+  let response: Response;
+  try {
+    response = await fetch(`${artworkServiceUrl(session.serverUrl)}/items/${encodeURIComponent(item.id)}/artwork`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: authorization(session.accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ imageType, dataUrl })
+    });
+  } catch {
+    throw new Error('PRISM Artwork is not reachable. Update the Synology project and make sure port 8097 is available.');
+  }
+  const result = await response.json().catch(() => ({})) as { updatedAt?: number; error?: string };
+  if (!response.ok) throw new Error(result.error || `Artwork service returned ${response.status}.`);
+  return { updatedAt: result.updatedAt ?? Date.now() };
 }
 
 export async function getViews(session: PrismSession): Promise<LibraryView[]> {

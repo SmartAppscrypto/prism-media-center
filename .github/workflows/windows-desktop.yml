@@ -26,9 +26,9 @@ jobs:
         run: |
           $archive = Join-Path $env:RUNNER_TEMP "vlc.zip"
           $runtimeRoot = Join-Path $env:RUNNER_TEMP "vlc-runtime"
-          Invoke-WebRequest "https://download.videolan.org/pub/videolan/vlc/3.0.23/win64/vlc-3.0.23-win64.zip" -OutFile $archive
+          Invoke-WebRequest "https://download.videolan.org/pub/videolan/vlc/3.0.24/win64/vlc-3.0.24-win64.zip" -OutFile $archive
           Expand-Archive $archive -DestinationPath $runtimeRoot
-          "PRISM_VLC_DIR=$runtimeRoot\vlc-3.0.23" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PRISM_VLC_DIR=$runtimeRoot\vlc-3.0.24" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: npm test
       - run: npm run package:windows
       - uses: actions/upload-artifact@v4
