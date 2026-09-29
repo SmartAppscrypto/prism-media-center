@@ -1,12 +1,14 @@
 import SwiftUI
 import AVKit
+#if os(macOS)
+import AppKit
+#endif
 
 @main
 struct PrismApp: App {
-    @State private var model = LibraryModel()
     var body: some Scene {
         WindowGroup {
-            PrismRoot(model: model)
+            PrismWindow()
                 .preferredColorScheme(.dark)
         }
     }
@@ -45,7 +47,7 @@ struct Finances: Decodable { let budget: Double?; let revenue: Double? }
 
 @MainActor @Observable
 final class LibraryModel {
-    // Credentials stay in memory for this native preview. No shared/demo server.
+    // Session credentials are memory-only; never written to preferences or logs.
     var server = ""
     var username = ""
     var password = ""
@@ -70,20 +72,13 @@ final class LibraryModel {
     private var reloadRevision = 0
 
     func endpoint(_ path: String, query: [URLQueryItem] = []) throws -> URL {
-        guard var parts = URLComponents(string: server.trimmingCharacters(in: .whitespacesAndNewlines)),
-              ["https", "http"].contains(parts.scheme), parts.host != nil,
-              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil else {
-            throw URLError(.badURL)
-        }
-        parts.path = parts.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        parts.path = "/" + ([parts.path, path].filter { !$0.isEmpty }.joined(separator: "/"))
-        parts.queryItems = query.isEmpty ? nil : query
-        guard let url = parts.url else { throw URLError(.badURL) }; return url
+        try ServerAddress.endpoint(server: server, path: path, query: query)
     }
+
     func request<T: Decodable>(_ path: String, query: [URLQueryItem] = [], body: Data? = nil) async throws -> T {
         var request = URLRequest(url: try endpoint(path, query: query))
         request.timeoutInterval = 20
-        request.setValue("MediaBrowser Client=\"PRISM iOS\", Device=\"iPhone\", DeviceId=\"\(deviceID)\", Version=\"0.15.0\"", forHTTPHeaderField: "Authorization")
+        request.setValue("MediaBrowser Client=\"PRISM\", Device=\"Apple\", DeviceId=\"\(deviceID)\", Version=\"1.0.0\"", forHTTPHeaderField: "Authorization")
         if !token.isEmpty { request.setValue(token, forHTTPHeaderField: "X-Emby-Token") }
         if let body { request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await network.data(for: request)
@@ -105,7 +100,7 @@ final class LibraryModel {
             guard revision == sessionRevision else { return }
             token = login.AccessToken; userID = login.User.Id
             await reload()
-        } catch { self.error = "Could not sign in. Check your server address, network access and account. Use HTTPS for a remote server." }
+        } catch { if revision != sessionRevision { return }; self.error = "Could not sign in. Check your server address, network access and account. Use HTTPS for a remote server." }
     }
     func reload() async {
         guard !token.isEmpty else { return }
@@ -114,7 +109,7 @@ final class LibraryModel {
         let session = sessionRevision
         busy = true; defer { if revision == reloadRevision && session == sessionRevision { busy = false } }
         do {
-            let result: Items = try await request("Users/\(userID)/Items", query: [
+            let result: Items = try await request("Users/\(try ServerAddress.id(userID))/Items", query: [
                 .init(name: "Recursive", value: "true"), .init(name: "IncludeItemTypes", value: "Movie,Series,Video"),
                 .init(name: "Fields", value: "Overview,ProviderIds"), .init(name: "SortBy", value: "SortName")
             ])
@@ -127,11 +122,12 @@ final class LibraryModel {
         selectionTask = Task {
             do {
                 if item.Type == "Series" {
-                    let result: Items = try await request("Shows/\(item.id)/Episodes", query: [.init(name: "userId", value: userID), .init(name: "Fields", value: "Overview,ProviderIds")])
+                    let result: Items = try await request("Shows/\(try ServerAddress.id(item.id))/Episodes", query: [.init(name: "userId", value: userID), .init(name: "Fields", value: "Overview,ProviderIds")])
                     if !Task.isCancelled { episodes = result.Items }
                 }
                 if item.Type == "Movie", !tmdbToken.isEmpty, let id = item.ProviderIds?["Tmdb"] ?? item.ProviderIds?["tmdb"], Int(id) != nil {
                     var request = URLRequest(url: URL(string: "https://api.themoviedb.org/3/movie/\(id)")!)
+                    request.timeoutInterval = 20
                     request.setValue("Bearer \(tmdbToken)", forHTTPHeaderField: "Authorization")
                     let (data, response) = try await network.data(for: request)
                     if (response as? HTTPURLResponse)?.statusCode == 200, !Task.isCancelled { finances = try JSONDecoder().decode(Finances.self, from: data) }
@@ -142,7 +138,7 @@ final class LibraryModel {
     func play(_ item: Media) {
         do {
             // AVPlayer direct play. Server transcoding negotiation is not part of this preview.
-            let url = try endpoint("Videos/\(item.id)/stream", query: [.init(name: "static", value: "true"), .init(name: "api_key", value: token)])
+            let url = try endpoint("Videos/\(try ServerAddress.id(item.id))/stream", query: [.init(name: "static", value: "true"), .init(name: "api_key", value: token)])
             player.replaceCurrentItem(with: AVPlayerItem(url: url))
             playing = item; seconds = 0; duration = 0; player.play()
             if observer == nil {
@@ -152,7 +148,7 @@ final class LibraryModel {
                         self.seconds = time.seconds.isFinite ? time.seconds : 0
                         let value = self.player.currentItem?.duration.seconds ?? 0
                         self.duration = value.isFinite ? value : 0
-                        if self.player.currentItem?.status == .failed { self.error = "This file could not play. Try an iOS-compatible MP4 (H.264/HEVC with AAC audio)." }
+                        if self.player.currentItem?.status == .failed { self.stop(); self.error = "This file could not play. Use an Apple-compatible MP4 (H.264/HEVC with AAC audio)." }
                     }
                 }
             }
@@ -168,22 +164,29 @@ final class LibraryModel {
     }
 }
 
+struct PrismWindow: View {
+    @State private var model = LibraryModel()
+    var body: some View { PrismRoot(model: model).onDisappear { model.stop() } }
+}
+
 // Keep the AVPlayer in the model, never in a posture-specific view.
 struct PrismRoot: View {
     @Bindable var model: LibraryModel
     @State private var mode: DisplayMode = .automatic
     @State private var hideSecondary = false
     @State private var pane = 0
-    enum DisplayMode: String, CaseIterable { case automatic = "Automatic", full = "Full screen", stacked = "Top / bottom", sideBySide = "Side by side" }
+    @State private var scrollRequest = 0
+    @FocusState private var libraryTopFocused: Bool
+    #if os(macOS)
+    @State private var window: NSWindow?
+    #endif
 
     var body: some View {
         Group {
             if model.token.isEmpty { login }
             else {
                 GeometryReader { proxy in
-                    let divisions = proxy.reservedRegions(kind: .division)
-                    let fold = divisions.first?.frame
-                    let layout = layoutFor(size: proxy.size, fold: fold)
+                    let layout = PlaybackLayout.resolve(size: proxy.size, fold: divisionFrame(proxy), mode: mode)
                     ZStack(alignment: .topLeading) {
                         Color.black.ignoresSafeArea()
                         if model.playing != nil {
@@ -200,33 +203,32 @@ struct PrismRoot: View {
                 }
             }
         }
+        #if os(macOS)
+        .background(WindowAccessor { window = $0 })
+        .frame(minWidth: 640, minHeight: 400)
+        #endif
+        #if os(tvOS)
+        .onPlayPauseCommand {
+            guard model.playing != nil else { return }
+            if model.player.timeControlStatus == .playing { model.player.pause() } else { model.player.play() }
+        }
+        .onExitCommand {
+            if model.playing != nil { model.stop() }
+            returnToTop()
+        }
+        #endif
         .alert("PRISM", isPresented: Binding(get: { !model.error.isEmpty }, set: { if !$0 { model.error = "" } })) {
             Button("OK") { model.error = "" }
         } message: { Text(model.error) }
     }
-    func layoutFor(size: CGSize, fold: CGRect?) -> (video: CGRect, secondary: CGRect?) {
-        let whole = CGRect(origin: .zero, size: size)
-        if mode == .full { return (whole, nil) }
-        // Active reserved regions, rather than a guessed hinge angle, define safe panes.
-        if let fold, fold.width > fold.height, fold.minY > 0, fold.maxY < size.height {
-            return (CGRect(x: 0, y: 0, width: size.width, height: fold.minY), CGRect(x: 0, y: fold.maxY, width: size.width, height: size.height - fold.maxY))
-        }
-        if let fold, fold.minX > 0, fold.maxX < size.width {
-            return (CGRect(x: 0, y: 0, width: fold.minX, height: size.height), CGRect(x: fold.maxX, y: 0, width: size.width - fold.maxX, height: size.height))
-        }
-        if mode == .stacked { return (CGRect(x: 0, y: 0, width: size.width, height: size.height / 2), CGRect(x: 0, y: size.height / 2, width: size.width, height: size.height / 2)) }
-        if mode == .sideBySide && size.width >= 600 { return (CGRect(x: 0, y: 0, width: size.width / 2, height: size.height), CGRect(x: size.width / 2, y: 0, width: size.width / 2, height: size.height)) }
-        // Flat/open, closed outer display and narrow multitasking windows use one pane.
-        return (whole, nil)
-    }
     var login: some View {
         Form {
             Section { Text("PRISM").font(.largeTitle); Text("Connect to your own media server.") }
-            TextField("https://your-server.example", text: $model.server).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-            TextField("Username", text: $model.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+            TextField("https://your-server.example", text: $model.server).serverInput()
+            TextField("Username", text: $model.username).accountInput()
             SecureField("Password", text: $model.password)
             Button(model.busy ? "Connecting…" : "Connect") { Task { await model.signIn() } }.disabled(model.busy)
-            Text("This native preview keeps your session in memory. Sign in again after quitting. Use HTTPS outside a trusted home network.").font(.footnote)
+            Text("Your sign-in stays in memory only. Sign in again after quitting. Use HTTPS outside a trusted home network.").font(.footnote)
         }
     }
     var video: some View {
@@ -234,12 +236,20 @@ struct PrismRoot: View {
             HStack {
                 Button { model.stop() } label: { Label("Library", systemImage: "chevron.left") }
                 Spacer()
+                #if !os(tvOS)
                 Menu {
                     Picker("Layout", selection: $mode) { ForEach(DisplayMode.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                 } label: { Image(systemName: "rectangle.split.2x1") }.accessibilityLabel("Playback layout")
                 Button { hideSecondary.toggle() } label: { Image(systemName: hideSecondary ? "eye.slash" : "eye") }
                     .accessibilityLabel(hideSecondary ? "Show secondary pane" : "Hide secondary pane")
-                Button { mode = mode == .full ? .automatic : .full } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.accessibilityLabel("Full screen layout")
+                #endif
+                Button {
+                    #if os(macOS)
+                    window?.toggleFullScreen(nil)
+                    #else
+                    mode = mode == .full ? .automatic : .full
+                    #endif
+                } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.accessibilityLabel("Toggle full screen")
             }.padding(8).buttonStyle(.bordered)
             VideoPlayer(player: model.player)
             if model.duration > 0 { Text("\(Int(max(0, model.duration - model.seconds) / 60)) min remaining").font(.caption).monospacedDigit().padding(5) }
@@ -248,21 +258,29 @@ struct PrismRoot: View {
     var browser: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("PRISM").font(.headline)
+                Button("PRISM") { returnToTop() }.font(.headline).focused($libraryTopFocused).accessibilityLabel("Return to top of library")
                 Spacer()
                 if model.playing != nil { Button("Now playing") { if let item = model.playing { model.select(item); pane = 1 } } }
-                Button("Refresh") { Task { await model.reload() } }.disabled(model.busy)
+                Button("Refresh") { Task { await model.reload(); model.items.shuffle() } }.disabled(model.busy)
                 Button("Sign out") { model.signOut() }
             }.padding(.horizontal)
             Picker("Browse", selection: $pane) { Text("Library").tag(0); Text("Details").tag(1) }.pickerStyle(.segmented).padding(.horizontal)
             if pane == 0 {
-                List(model.items) { item in
-                    Button { model.select(item); pane = 1 } label: {
-                        VStack(alignment: .leading) { Text(item.Name); Text(item.Type ?? "Video").font(.caption).foregroundStyle(.secondary) }
+                ScrollViewReader { scroll in
+                    List {
+                        Color.clear.frame(height: 1).id("library-top").accessibilityHidden(true)
+                        if model.items.isEmpty && !model.busy { Text("No movies or shows found. Add media in your server settings, then refresh.") }
+                        ForEach(model.items) { item in
+                            Button { model.select(item); pane = 1 } label: {
+                                VStack(alignment: .leading) { Text(item.Name); Text(item.Type ?? "Video").font(.caption).foregroundStyle(.secondary) }
+                            }
+                        }
                     }
-                }.overlay { if model.busy { ProgressView() } }
+                    .onChange(of: scrollRequest) { _, _ in withAnimation { scroll.scrollTo("library-top", anchor: .top) } }
+                    .overlay { if model.busy { ProgressView() } }
+                }
             } else { details }
-        }.padding(.top, 8).background(Color(.systemBackground))
+        }.padding(.top, 8).background(.background)
     }
     var details: some View {
         ScrollView {
@@ -277,13 +295,18 @@ struct PrismRoot: View {
                     LabeledContent("Budget", value: money(model.finances?.budget))
                     LabeledContent("Box office", value: money(model.finances?.revenue))
                     DisclosureGroup("Optional TMDb details") {
-                        SecureField("Your TMDb read access token", text: $model.tmdbToken).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        SecureField("Your TMDb read access token", text: $model.tmdbToken).accountInput()
                         Button("Load financial details") { model.select(item) }
                         Text("Uses your own token. Data provided by TMDb; unavailable values are not treated as zero.").font(.caption)
                     }
                 }.padding()
             } else { Text("Choose a title from Library.").padding() }
         }
+    }
+    func returnToTop() {
+        pane = 0
+        scrollRequest += 1
+        libraryTopFocused = true
     }
     func money(_ amount: Double?) -> String { guard let amount, amount > 0 else { return "Unavailable" }; return amount.formatted(.currency(code: "USD").precision(.fractionLength(0))) }
 }
