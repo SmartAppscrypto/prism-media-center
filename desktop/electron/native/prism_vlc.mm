@@ -28,7 +28,6 @@ struct VlcApi {
   decltype(&libvlc_media_player_get_time) getTime = nullptr;
   decltype(&libvlc_media_player_set_time) setTime = nullptr;
   decltype(&libvlc_media_player_get_length) getLength = nullptr;
-  decltype(&libvlc_media_player_add_slave) addSlave = nullptr;
   decltype(&libvlc_video_get_spu) getSubtitleTrack = nullptr;
   decltype(&libvlc_video_set_spu) setSubtitleTrack = nullptr;
   decltype(&libvlc_audio_get_volume) getVolume = nullptr;
@@ -125,7 +124,6 @@ bool loadRuntime(const std::string& libraryPath, const std::string& pluginPath, 
   LOAD_VLC("libvlc_media_player_get_time", getTime);
   LOAD_VLC("libvlc_media_player_set_time", setTime);
   LOAD_VLC("libvlc_media_player_get_length", getLength);
-  LOAD_VLC("libvlc_media_player_add_slave", addSlave);
   LOAD_VLC("libvlc_video_get_spu", getSubtitleTrack);
   LOAD_VLC("libvlc_video_set_spu", setSubtitleTrack);
   LOAD_VLC("libvlc_audio_get_volume", getVolume);
@@ -186,16 +184,6 @@ void enforceSubtitlesOff() {
   for (const int delay : delays) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(delay) * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
       if (player && generation == subtitleCommandGeneration) api.setSubtitleTrack(player, -1);
-    });
-  }
-}
-
-void selectSubtitleTrack(int track) {
-  const uint64_t generation = ++subtitleCommandGeneration;
-  const int delays[] = {0, 250, 700, 1400};
-  for (const int delay : delays) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(delay) * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-      if (player && generation == subtitleCommandGeneration) api.setSubtitleTrack(player, track);
     });
   }
 }
@@ -284,37 +272,9 @@ napi_value setVolume(napi_env env, napi_callback_info info) {
   return jsBoolean(env, true);
 }
 
-napi_value addSubtitle(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value argv[1];
-  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-  if (!player || !argc) return jsBoolean(env, false);
-  ++subtitleCommandGeneration;
-  const std::string url = stringArg(env, argv[0]);
-  const libvlc_state_t previousState = api.getState(player);
-  const libvlc_time_t previousTime = api.getTime(player);
-  const bool wasPlaying = previousState == libvlc_Playing || previousState == libvlc_Opening || previousState == libvlc_Buffering;
-  const bool added = api.addSlave(player, libvlc_media_slave_type_subtitle, url.c_str(), true) == 0;
-  if (added && wasPlaying) {
-    api.play(player);
-    if (previousTime > 0) api.setTime(player, previousTime);
-  }
-  return jsBoolean(env, added);
-}
-
 napi_value disableSubtitles(napi_env env, napi_callback_info) {
   if (!player) return jsBoolean(env, false);
   enforceSubtitlesOff();
-  return jsBoolean(env, true);
-}
-
-napi_value selectSubtitle(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value argv[1];
-  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-  int32_t track = -1;
-  if (!player || !argc || napi_get_value_int32(env, argv[0], &track) != napi_ok || track < 0) return jsBoolean(env, false);
-  selectSubtitleTrack(track);
   return jsBoolean(env, true);
 }
 
@@ -366,8 +326,6 @@ napi_value initialize(napi_env env, napi_value exports) {
     {"setPaused", nullptr, setPaused, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"setTime", nullptr, setTime, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"setVolume", nullptr, setVolume, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"addSubtitle", nullptr, addSubtitle, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"selectSubtitle", nullptr, selectSubtitle, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"disableSubtitles", nullptr, disableSubtitles, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"state", nullptr, state, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"inspectParent", nullptr, inspectParent, nullptr, nullptr, nullptr, napi_default, nullptr}

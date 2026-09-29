@@ -17,7 +17,6 @@
     "package:windows": "npm run native:build && npm run vlc:prepare && npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
     "hls.js": "^1.6.13",
     "react": "latest",
     "react-dom": "latest"
@@ -36,7 +35,8 @@
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest",
-    "wait-on": "latest"
+    "wait-on": "latest",
+    "@vitejs/plugin-react": "latest"
   },
   "build": {
     "appId": "media.prism.desktop",
@@ -46,7 +46,8 @@
     },
     "files": [
       "dist/**/*",
-      "electron/**/*",
+      "electron/*.cjs",
+      "electron/native/build/Release/*.node",
       "package.json"
     ],
     "asarUnpack": [

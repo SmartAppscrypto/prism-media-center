@@ -59,20 +59,12 @@ export function estimatedLyricIndex(lines: LyricLine[], time: number, duration: 
   return active;
 }
 
-export function lyricLineProgress(lines: LyricLine[], index: number, time: number, duration: number) {
-  const start = lines[index]?.startSeconds;
-  if (start === undefined) return 0;
-  const end = lines[index + 1]?.startSeconds ?? duration;
-  if (end <= start) return time >= start ? 1 : 0;
-  return Math.max(0, Math.min(1, (time - start) / (end - start)));
-}
-
 function plainLines(value: string): LyricLine[] {
   return value.split(/\r?\n/).map((text) => text.trim()).filter(Boolean).map((text) => ({ text }));
 }
 
 function cacheKey(track: MediaItem, session: PrismSession) {
-  return `${session.serverUrl}:${track.id}`;
+  return `${session.serverUrl}:${session.userId}:${track.id}`;
 }
 
 function openDatabase(): Promise<IDBDatabase | null> {
@@ -131,14 +123,14 @@ async function fetchRemoteLyrics(track: MediaItem, album: Pick<MediaItem, 'title
   exact.searchParams.set('track_name', track.title);
   exact.searchParams.set('album_name', album.title);
   if (track.runtimeSeconds) exact.searchParams.set('duration', String(Math.round(track.runtimeSeconds)));
-  const exactResponse = await fetch(exact);
+  const exactResponse = await fetch(exact, { signal: AbortSignal.timeout(10000) });
   if (exactResponse.ok) return mapRemoteLyrics(await exactResponse.json() as LrcLibResult);
   if (exactResponse.status !== 404) throw new Error(`Lyrics provider returned ${exactResponse.status}.`);
 
   const search = new URL('https://lrclib.net/api/search');
   search.searchParams.set('artist_name', artist);
   search.searchParams.set('track_name', track.title);
-  const searchResponse = await fetch(search);
+  const searchResponse = await fetch(search, { signal: AbortSignal.timeout(10000) });
   if (!searchResponse.ok) throw new Error(`Lyrics provider returned ${searchResponse.status}.`);
   const matches = await searchResponse.json() as LrcLibResult[];
   const duration = track.runtimeSeconds ?? 0;
@@ -157,7 +149,7 @@ export async function resolveTrackLyrics(track: MediaItem, album: Pick<MediaItem
     const cached = await readCache(key);
     if (cached?.synced || cached?.instrumental) return cached;
     plainFallback = cached;
-    const serverLyrics = await getServerLyrics(track, session);
+    const serverLyrics = await getServerLyrics(track, session).catch(() => null);
     if (serverLyrics?.synced || serverLyrics?.instrumental) {
       await writeCache(key, serverLyrics);
       return serverLyrics;

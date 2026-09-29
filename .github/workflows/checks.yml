@@ -1,0 +1,30 @@
+name: App checks
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+permissions:
+  contents: read
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:security
+      - run: npm run build
+      - run: npm audit --audit-level=high
+      - if: runner.os == 'Windows'
+        run: npm --workspace desktop run native:build
+      - if: runner.os == 'Linux'
+        run: docker compose -f server/compose.yaml config --quiet

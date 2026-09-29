@@ -253,3 +253,29 @@ describe('Jellyfin 12 compatibility', () => {
     expect((await getLibrary(session))[0]).toMatchObject({ id: 'one', title: 'My Movie' });
   });
 });
+
+describe('authenticated request boundaries', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'viewer' };
+  it('rejects unsafe server addresses before attempting authentication', async () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    for (const url of ['file:///tmp/media', 'https://user:pass@server', 'https://server?token=x', 'https://server#x']) {
+      await expect(signIn(url, 'viewer', 'password')).rejects.toThrow();
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('bounds authenticated auxiliary requests and prevents redirects', async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ Lyrics: [] }) });
+    vi.stubGlobal('fetch', fetch);
+    await getServerLyrics({ id: 'item' } as MediaItem, session);
+    await downloadRemoteSubtitle({ id: 'item' } as MediaItem, session, 'subtitle');
+    for (const [, init] of fetch.mock.calls) {
+      expect(init.redirect).toBe('error');
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+  it('encodes server-provided identifiers as a single URL segment', () => {
+    const result = new URL(directPlaybackUrl({ id: 'item/other?test' } as MediaItem, session, baseDetails));
+    expect(result.pathname).toBe('/Videos/item%2Fother%3Ftest/stream.mp4');
+  });
+});

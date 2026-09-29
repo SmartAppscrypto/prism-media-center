@@ -37,8 +37,6 @@ declare global {
       setPaused: (paused: boolean) => Promise<boolean>;
       seek: (milliseconds: number) => Promise<boolean>;
       setVolume: (volume: number) => Promise<boolean>;
-      addSubtitle: (subtitleUrl: string) => Promise<boolean>;
-      selectSubtitle: (track: number) => Promise<boolean>;
       disableSubtitles: () => Promise<boolean>;
       stop: () => Promise<boolean>;
     };
