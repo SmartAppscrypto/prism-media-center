@@ -32,3 +32,7 @@ Apple's implementation sources:
 - [Preparing apps and screen transitions](https://developer.apple.com/videos/play/tech-talks/111461/): use current scene geometry and preserve app state as displays change.
 - [Scenes and displays](https://developer.apple.com/videos/play/tech-talks/111464/): system-managed display/accessory availability; outer camera accessory is not a general movie-display API.
 - [Design guidance](https://developer.apple.com/design/human-interface-guidelines/designing-for-iphone-duo).
+
+## Build attempt on 29 September 2026
+
+The GitHub `xcode-27` runner currently supplies Xcode 27.0, not the required 27.1 SDK. The explicit SDK gate failed before native compilation. Swift syntax parsing passed locally, but this is not a simulator build. Install/select Xcode 27.1 and rerun the Native iOS SDK validation workflow before claiming compatibility.

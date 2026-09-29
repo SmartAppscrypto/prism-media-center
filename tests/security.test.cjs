@@ -1,14 +1,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { trustedPage, trustedSender } = require('../desktop/electron/security.cjs');
 
 test('only packaged app and trusted main frame can use IPC', () => {
-  const app = '/opt/prism/dist/index.html';
-  assert.equal(trustedPage('file:///opt/prism/dist/index.html', app), true);
-  for (const url of ['file:///etc/passwd', 'https://evil.test', 'file:///opt/prism/dist/index.html?evil=1']) {
+  const app = path.resolve('desktop/dist/index.html');
+  const appURL = pathToFileURL(app).href;
+  assert.equal(trustedPage(appURL, app), true);
+  for (const url of ['file:///etc/passwd', 'https://evil.test', appURL + '?evil=1']) {
     assert.equal(trustedPage(url, app), false);
   }
-  const mainFrame = { url: 'file:///opt/prism/dist/index.html' };
+  const mainFrame = { url: appURL };
   assert.equal(trustedSender({ senderFrame: mainFrame, sender: { mainFrame } }, app), true);
   assert.equal(trustedSender({ senderFrame: { ...mainFrame }, sender: { mainFrame } }, app), false);
 });

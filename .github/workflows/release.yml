@@ -85,7 +85,8 @@ jobs:
           docker compose up -d jellyfin
           for attempt in $(seq 1 90); do
             if curl --fail http://127.0.0.1:8096/System/Info/Public -o /tmp/server-info.json; then
-              python3 -c 'import json; d=json.load(open("/tmp/server-info.json")); assert not d["StartupWizardCompleted"], d'
+              python3 -c 'import json; d=json.load(open("/tmp/server-info.json")); assert d.get("Version"), d; assert not d.get("StartupWizardCompleted", False), d'
+              curl --fail http://127.0.0.1:8096/Startup/Configuration
               exit 0
             fi
             sleep 2
