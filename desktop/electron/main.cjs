@@ -298,6 +298,7 @@ handle('prism-native-stop', () => { getNativePlayer()?.stop(); return true; });
 listen('prism-window-drag-start', (event, point) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+  if (window.isFullScreen() || window.isMaximized()) return;
   windowDrags.set(event.sender.id, { window, pointer: point, bounds: window.getBounds() });
 });
 

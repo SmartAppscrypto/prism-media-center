@@ -7,6 +7,23 @@
 #include <cstring>
 #include <string>
 
+// Receive the initial mouse-down in AppKit. The video surface can interrupt
+// Chromium pointer capture, so renderer-only dragging is unreliable here.
+@interface PrismPlayerDragView : NSView
+@end
+@implementation PrismPlayerDragView
+- (BOOL)isOpaque { return NO; }
+- (BOOL)acceptsFirstMouse:(NSEvent*)event { return YES; }
+- (void)mouseDown:(NSEvent*)event {
+  if (!(self.window.styleMask & NSWindowStyleMaskFullScreen)) {
+    // Electron toggles NSWindow.movable for its renderer hit regions. This
+    // native strip is explicitly draggable regardless of the last web hit.
+    self.window.movable = YES;
+    [self.window performWindowDragWithEvent:event];
+  }
+}
+@end
+
 namespace {
 
 struct VlcApi {
@@ -38,6 +55,7 @@ VlcApi api;
 libvlc_instance_t* instance = nullptr;
 libvlc_media_player_t* player = nullptr;
 NSView* videoView = nil;
+PrismPlayerDragView* dragView = nil;
 NSView* parentView = nil;
 std::string lastError;
 uint64_t subtitleCommandGeneration = 0;
@@ -169,12 +187,20 @@ void attachVideoView(NSView* parent) {
     NSArray<NSView*>* subviews = parent.subviews;
     if (subviews.count > 0) [parent addSubview:videoView positioned:NSWindowBelow relativeTo:subviews.firstObject];
     else [parent addSubview:videoView];
+    if (!dragView) dragView = [[PrismPlayerDragView alloc] init];
+    // Match the renderer's strip while leaving Back and macOS window controls
+    // accessible. This transparent view stays above the web and video views.
+    dragView.frame = NSMakeRect(180, parent.isFlipped ? 0 : parent.bounds.size.height - 72,
+                               std::max<CGFloat>(0, parent.bounds.size.width - 180), 72);
+    dragView.autoresizingMask = NSViewWidthSizable | (parent.isFlipped ? NSViewMaxYMargin : NSViewMinYMargin);
+    dragView.hidden = NO;
+    [parent addSubview:dragView positioned:NSWindowAbove relativeTo:nil];
   };
   if (NSThread.isMainThread) attach(); else dispatch_sync(dispatch_get_main_queue(), attach);
 }
 
 void hideVideoView() {
-  void (^hide)(void) = ^{ if (videoView) videoView.hidden = YES; };
+  void (^hide)(void) = ^{ if (videoView) videoView.hidden = YES; if (dragView) dragView.hidden = YES; };
   if (NSThread.isMainThread) hide(); else dispatch_sync(dispatch_get_main_queue(), hide);
 }
 
@@ -311,7 +337,7 @@ void cleanup(void*) {
   if (player) { api.stop(player); api.releasePlayer(player); player = nullptr; }
   if (instance) { api.releaseInstance(instance); instance = nullptr; }
   if (videoView) {
-    void (^remove)(void) = ^{ [videoView removeFromSuperview]; videoView = nil; parentView = nil; };
+    void (^remove)(void) = ^{ [videoView removeFromSuperview]; [dragView removeFromSuperview]; videoView = nil; dragView = nil; parentView = nil; };
     if (NSThread.isMainThread) remove(); else dispatch_sync(dispatch_get_main_queue(), remove);
   }
   if (api.library) { dlclose(api.library); api.library = nullptr; }

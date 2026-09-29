@@ -109,7 +109,10 @@ function windowDragProps() {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) window.prismWindow?.moveDrag(event.screenX, event.screenY);
     },
     onPointerUp(event: ReactPointerEvent<HTMLElement>) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        window.prismWindow?.moveDrag(event.screenX, event.screenY);
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
       window.prismWindow?.endDrag();
     },
     onPointerCancel() {

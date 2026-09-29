@@ -56,7 +56,8 @@ describe('player audit regressions', () => {
     pointer('pointerup', 500, 260);
     pointer('pointermove', 700, 400);
     expect(startDrag).toHaveBeenCalledWith(400, 200);
-    expect(moveDrag).toHaveBeenCalledExactlyOnceWith(500, 260);
+    expect(moveDrag).toHaveBeenCalledTimes(2);
+    expect(moveDrag).toHaveBeenLastCalledWith(500, 260);
     expect(endDrag).toHaveBeenCalledOnce();
     expect(captured).toBe(false);
   });
