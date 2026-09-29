@@ -17,6 +17,13 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+echo Waiting for the server to finish starting...
+powershell -NoProfile -Command "$ready=$false; for($i=0;$i -lt 90;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 http://localhost:8096/health; if($r.StatusCode -eq 200){$ready=$true;break}}catch{}; Start-Sleep -Seconds 2}; if(-not $ready){exit 1}"
+if errorlevel 1 (
+  echo Startup is taking longer than expected. Check Docker Desktop logs and retry.
+  pause
+  exit /b 1
+)
 start http://localhost:8096
 echo Create YOUR server account in the browser. Keep Docker Desktop running while watching.
 pause

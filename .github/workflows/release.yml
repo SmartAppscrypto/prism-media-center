@@ -138,6 +138,7 @@ jobs:
       - name: Package server, guide and source notices
         run: |
           cp docs/GETTING-STARTED.md server/READ-ME-FIRST.md
+          cp docs/SYNOLOGY.md server/SYNOLOGY.md
           zip -r release/Prism-Server-Starter.zip server -x 'server/.env' 'server/config/*' 'server/cache/*' 'server/media/*'
           cp output/pdf/PRISM-Getting-Started.pdf release/
           cp desktop/legal/THIRD-PARTY-NOTICES.md release/
