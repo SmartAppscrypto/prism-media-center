@@ -6,7 +6,20 @@ on:
 permissions:
   contents: read
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --draft --prerelease --title "PRISM $GITHUB_REF_NAME - desktop preview" --notes-file docs/RELEASE-NOTES.md
   build:
+    needs: prepare
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -59,13 +72,25 @@ jobs:
           $base = "https://download.videolan.org/pub/videolan/vlc/3.0.24/win64"
           $archive = Join-Path $env:RUNNER_TEMP $file
           Invoke-WebRequest "$base/$file" -OutFile $archive
-          $expected = ((Invoke-WebRequest "$base/$file.sha256").Content.Trim() -split '\s+')[0]
+          Invoke-WebRequest "$base/$file.sha256" -OutFile "$archive.sha256"
+          $expected = ((Get-Content "$archive.sha256" -Raw).Trim() -split '\s+')[0]
           if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expected) { throw 'VLC checksum mismatch' }
           $runtime = Join-Path $env:RUNNER_TEMP 'vlc-runtime'
           Expand-Archive $archive -DestinationPath $runtime
           "PRISM_VLC_DIR=$runtime\vlc-3.0.24" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: npm run package:${{ matrix.platform }}
+      - name: Attach installer to draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(desktop/release/*.dmg desktop/release/*Setup.exe)
+          test "${#files[@]}" -gt 0
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
       - uses: actions/upload-artifact@v4
+        if: "!startsWith(github.ref, 'refs/tags/')"
         with:
           name: Prism-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -77,6 +102,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Start a clean independent server
         working-directory: server
         run: |
@@ -85,8 +113,7 @@ jobs:
           docker compose up -d jellyfin
           for attempt in $(seq 1 90); do
             if curl --fail http://127.0.0.1:8096/System/Info/Public -o /tmp/server-info.json; then
-              python3 -c 'import json; d=json.load(open("/tmp/server-info.json")); assert d.get("Version"), d; assert not d.get("StartupWizardCompleted", False), d'
-              curl --fail http://127.0.0.1:8096/Startup/Configuration
+              node --experimental-strip-types ../scripts/server-smoke.mjs
               exit 0
             fi
             sleep 2
@@ -104,10 +131,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: release
-          merge-multiple: true
+      - name: Download verified installers from draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$GITHUB_REF_NAME" --dir release
       - name: Package server, guide and source notices
         run: |
           cp docs/GETTING-STARTED.md server/READ-ME-FIRST.md
@@ -123,4 +150,6 @@ jobs:
       - name: Publish preview installers
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --prerelease --title "PRISM $GITHUB_REF_NAME - desktop preview" --notes-file docs/RELEASE-NOTES.md
+        run: |
+          gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease

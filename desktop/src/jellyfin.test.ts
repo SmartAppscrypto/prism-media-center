@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackVersions, getSeriesEpisodes, getServerLyrics, searchRemoteSubtitles } from './jellyfin';
+import { signIn, normalizeServerJson, adaptivePlaybackUrl, audioPlaybackUrl, directPlaybackUrl, directPlayMimeType, directStreamMimeType, downloadRemoteSubtitle, getAlbumTracks, getItemDetails, getLibrary, getPersonMovies, getPlaybackVersions, getSeriesEpisodes, getServerLyrics, searchRemoteSubtitles } from './jellyfin';
 import type { MediaItem, PlaybackDetails, PrismSession } from './types';
 
 const baseDetails: PlaybackDetails = {
@@ -235,5 +235,21 @@ describe('playback selection', () => {
       'http://server/Items/item/RemoteSearch/Subtitles/provider%2Fresult',
       expect.objectContaining({ method: 'POST' })
     );
+  });
+});
+
+
+describe('Jellyfin 12 compatibility', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('normalizes nested DTOs without renaming provider dictionary keys', () => {
+    expect(normalizeServerJson({ items: [{ id: 'one', providerIds: { MusicBrainzAlbum: 'mb' }, mediaSources: [{ runTimeTicks: 100 }] }] }))
+      .toEqual({ Items: [{ Id: 'one', ProviderIds: { MusicBrainzAlbum: 'mb' }, MediaSources: [{ RunTimeTicks: 100 }] }] });
+  });
+  it('signs in and loads a camelCase library', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ accessToken: 'test', user: { id: 'u', name: 'viewer' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [{ id: 'one', name: 'My Movie', type: 'Movie', runTimeTicks: 600000000 }] }) }));
+    const session = await signIn('http://localhost:8096', 'viewer', 'test');
+    expect(session.accessToken).toBe('test');
+    expect((await getLibrary(session))[0]).toMatchObject({ id: 'one', title: 'My Movie' });
   });
 });

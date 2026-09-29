@@ -1,5 +1,16 @@
 import type { LibraryView, MediaDetails, MediaItem, MediaPerson, PlaybackDetails, PrismSession, RemoteSubtitle, TrackLyrics } from './types';
 
+// Jellyfin 12 uses camelCase; older servers use PascalCase DTO fields.
+// Provider/image dictionaries contain data keys, not DTO property names.
+export function normalizeServerJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeServerJson);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => {
+    const name = key.charAt(0).toUpperCase() + key.slice(1);
+    return [name, ['ProviderIds', 'ImageTags'].includes(name) ? child : normalizeServerJson(child)];
+  }));
+}
+
 const deviceIdKey = 'prism-device-id';
 
 function normalizedUrl(value: string) {
@@ -48,7 +59,7 @@ async function api<T>(serverUrl: string, path: string, init: RequestInit = {}, t
     }
   });
   if (!response.ok) throw new Error(response.status === 401 ? 'The username or password is incorrect.' : `Server returned ${response.status}.`);
-  return response.json() as Promise<T>;
+  return normalizeServerJson(await response.json()) as T;
 }
 
 export async function signIn(serverUrl: string, username: string, password: string): Promise<PrismSession> {
@@ -259,7 +270,7 @@ export async function getServerLyrics(track: MediaItem, session: PrismSession): 
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Server returned ${response.status}.`);
-  const result = await response.json() as {
+  const result = normalizeServerJson(await response.json()) as {
     Metadata?: { IsSynced?: boolean };
     Lyrics?: Array<{ Text?: string; Start?: number }>;
   };
@@ -313,8 +324,8 @@ export async function getItemDetails(item: MediaItem, session: PrismSession): Pr
     tagline: ((result.Taglines as string[] | undefined) ?? [])[0],
     budget: numeric(result.Budget),
     revenue: numeric(result.Revenue) ?? numeric(result.BoxOffice),
-    tmdbId: providerIds.Tmdb,
-    imdbId: providerIds.Imdb
+    tmdbId: providerIds.Tmdb ?? providerIds.tmdb,
+    imdbId: providerIds.Imdb ?? providerIds.imdb
   };
 }
 

@@ -56,11 +56,14 @@ async function authenticatedItem(itemId, authorization) {
   if (!authorization?.startsWith('MediaBrowser ')) throw Object.assign(new Error('Authentication required.'), { status: 401 });
   const me = await jellyfin('/Users/Me', authorization);
   if (!me.ok) throw Object.assign(new Error('PRISM Server rejected this session.'), { status: 401 });
-  const user = await me.json();
+  const rawUser = await me.json();
+  const policy = rawUser.Policy ?? rawUser.policy;
+  const user = { Id: rawUser.Id ?? rawUser.id, Policy: { IsAdministrator: policy?.IsAdministrator ?? policy?.isAdministrator } };
   if (user.Policy?.IsAdministrator !== true) throw Object.assign(new Error('Only server administrators may change artwork.'), { status: 403 });
   const itemResponse = await jellyfin(`/Users/${encodeURIComponent(user.Id)}/Items/${encodeURIComponent(itemId)}`, authorization);
   if (!itemResponse.ok) throw Object.assign(new Error('That Home Video is not available to this user.'), { status: itemResponse.status });
-  return itemResponse.json();
+  const item = await itemResponse.json();
+  return { Path: item.Path ?? item.path, Type: item.Type ?? item.type };
 }
 
 function resolveItemDirectory(item) {

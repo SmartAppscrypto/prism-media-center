@@ -18,6 +18,13 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     }
 }
 
+struct DTOKey: CodingKey {
+    let stringValue: String
+    var intValue: Int? { nil }
+    init(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { return nil }
+}
+
 struct Media: Decodable, Identifiable, Hashable {
     let Id: String
     let Name: String
@@ -79,7 +86,12 @@ final class LibraryModel {
         if let body { request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await network.data(for: request)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else { throw URLError(.userAuthenticationRequired) }
-        return try JSONDecoder().decode(T.self, from: data)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .custom { keys in
+            let key = keys.last!.stringValue
+            return DTOKey(stringValue: key.prefix(1).uppercased() + key.dropFirst())
+        }
+        return try decoder.decode(T.self, from: data)
     }
     func signIn() async {
         busy = true; error = ""
@@ -108,7 +120,7 @@ final class LibraryModel {
                     let result: Items = try await request("Shows/\(item.id)/Episodes", query: [.init(name: "userId", value: userID), .init(name: "Fields", value: "Overview,ProviderIds")])
                     if !Task.isCancelled { episodes = result.Items }
                 }
-                if !tmdbToken.isEmpty, let id = item.ProviderIds?["Tmdb"], Int(id) != nil {
+                if !tmdbToken.isEmpty, let id = item.ProviderIds?["Tmdb"] ?? item.ProviderIds?["tmdb"], Int(id) != nil {
                     var request = URLRequest(url: URL(string: "https://api.themoviedb.org/3/movie/\(id)")!)
                     request.setValue("Bearer \(tmdbToken)", forHTTPHeaderField: "Authorization")
                     let (data, response) = try await network.data(for: request)
