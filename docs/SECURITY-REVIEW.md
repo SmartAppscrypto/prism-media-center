@@ -2,6 +2,8 @@
 
 Scope: desktop renderer/preload/main-process code, optional artwork service, server defaults, npm dependency audit and release configuration. This is a focused engineering review, not an independent penetration test or a guarantee that no vulnerabilities remain.
 
+Follow-up: the [application audit](AUDIT-2026-09-29.md) found newly reported advisories for Electron 43.2.0 and updated the source to 43.7.6. It also hardens auxiliary authenticated requests, concurrent storage writes and artwork replacement. These follow-up changes are not included in the previously published 0.15.0 installers.
+
 | Finding | Severity | Resolution |
 | --- | --- | --- |
 | Privileged IPC accepted unvalidated renderer frames | High | Shared main-frame and exact app-page checks wrap every registered PRISM IPC handler. |

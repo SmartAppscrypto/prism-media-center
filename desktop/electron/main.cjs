@@ -4,6 +4,7 @@ const fsSync = require('node:fs');
 const path = require('node:path');
 const { findShotOnWhatPage, slugify } = require('./shotonwhat.cjs');
 
+const { writeJsonAtomic } = require('./storage.cjs');
 const { trustedPage, trustedSender } = require('./security.cjs');
 const appFile = path.join(__dirname, '..', 'dist', 'index.html');
 const devServer = app.isPackaged ? undefined : process.env.VITE_DEV_SERVER_URL;
@@ -31,6 +32,7 @@ const productionFacetFields = new Set([
 ]);
 let productionCache;
 let productionScanRunning = false;
+let productionScanGeneration = 0;
 let nativePlayer;
 
 function nativePlayerPaths() {
@@ -64,8 +66,7 @@ async function readJson(filename, fallback) {
 }
 
 async function writeJson(filename, value) {
-  await fs.mkdir(app.getPath('userData'), { recursive: true });
-  await fs.writeFile(prismDataPath(filename), JSON.stringify(value), { mode: 0o600 });
+  await writeJsonAtomic(prismDataPath(filename), value);
 }
 
 async function getProductionCache() {
@@ -109,14 +110,14 @@ function tmdbRequest(pathname, token) {
   const headers = { Accept: 'application/json' };
   if (token.startsWith('eyJ')) headers.Authorization = `Bearer ${token}`;
   else url.searchParams.set('api_key', token);
-  return fetch(url, { headers });
+  return fetch(url, { headers, redirect: 'error', signal: AbortSignal.timeout(15000) });
 }
 
 let memorySession = null;
 let sessionWrites = Promise.resolve();
 function validSession(value) {
   if (!value || !['serverUrl', 'accessToken', 'userId', 'username'].every((key) => typeof value[key] === 'string' && value[key].length <= 8192)) return false;
-  try { const url = new URL(value.serverUrl); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; }
+  try { const url = new URL(value.serverUrl); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash && Boolean(value.accessToken && value.userId); }
   catch { return false; }
 }
 handle('prism-session-load', async () => {
@@ -138,6 +139,7 @@ handle('prism-session-save', async (_event, value) => {
   return true;
 });
 handle('prism-session-clear', async () => {
+  ++productionScanGeneration;
   memorySession = null;
   sessionWrites = sessionWrites.catch(() => undefined).then(() => fs.rm(prismDataPath('prism-session.json'), { force: true }));
   await sessionWrites;
@@ -148,7 +150,7 @@ handle('prism-tmdb-status', async () => Boolean(await readTmdbToken()));
 handle('prism-tmdb-save', async (_event, rawToken) => {
   const token = typeof rawToken === 'string' ? rawToken.trim() : '';
   if (!token) return { ok: false, error: 'Enter a TMDb token.' };
-  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Secure storage is not available on this Mac.' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Secure storage is not available on this computer.' };
   try {
     const response = await tmdbRequest('/authentication', token);
     if (!response.ok) return { ok: false, error: 'TMDb did not accept that token.' };
@@ -222,13 +224,17 @@ handle('prism-production-scan', async (event, rawItems) => {
     .filter((item) => productionKey(item))
     .slice(0, 5000) : [];
   productionScanRunning = true;
+  const generation = ++productionScanGeneration;
+  const cancelled = () => generation !== productionScanGeneration || event.sender.isDestroyed();
   let found = 0;
   let missing = 0;
   let skipped = 0;
   try {
     for (let index = 0; index < items.length; index += 1) {
+      if (cancelled()) return { ok: false, error: 'Scan cancelled.' };
       const item = items[index];
       const cache = await getProductionCache();
+      if (cancelled()) return { ok: false, error: 'Scan cancelled.' };
       const cached = cache[productionKey(item)];
       if (cached?.data || (cached && Date.now() - cached.checkedAt < productionMissMaxAge)) {
         skipped += 1;
@@ -237,6 +243,7 @@ handle('prism-production-scan', async (event, rawItems) => {
         if (data) found += 1;
         else missing += 1;
       }
+      if (cancelled()) return { ok: false, error: 'Scan cancelled.' };
       event.sender.send('prism-production-progress', {
         current: index + 1,
         total: items.length,
@@ -292,20 +299,13 @@ handle('prism-native-state', () => getNativePlayer()?.state() ?? { active: false
 handle('prism-native-pause', (_event, paused) => Boolean(getNativePlayer()?.setPaused(Boolean(paused))));
 handle('prism-native-seek', (_event, milliseconds) => Number.isFinite(milliseconds) && Boolean(getNativePlayer()?.setTime(Math.max(0, Math.round(milliseconds)))));
 handle('prism-native-volume', (_event, volume) => Number.isFinite(volume) && Boolean(getNativePlayer()?.setVolume(Math.round(Math.max(0, Math.min(1.25, volume)) * 100))));
-handle('prism-native-subtitle-add', (_event, subtitleUrl) => {
-  if (typeof subtitleUrl !== 'string') return false;
-  try {
-    const parsed = new URL(subtitleUrl);
-    return ['http:', 'https:'].includes(parsed.protocol) && Boolean(getNativePlayer()?.addSubtitle(parsed.toString()));
-  } catch { return false; }
-});
-handle('prism-native-subtitle-select', (_event, track) => Number.isInteger(track) && track >= 0 && Boolean(getNativePlayer()?.selectSubtitle(track)));
 handle('prism-native-subtitle-off', () => Boolean(getNativePlayer()?.disableSubtitles()));
 handle('prism-native-stop', () => { getNativePlayer()?.stop(); return true; });
 
 listen('prism-window-drag-start', (event, point) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+  if (window.isFullScreen() || window.isMaximized()) return;
   windowDrags.set(event.sender.id, { window, pointer: point, bounds: window.getBounds() });
 });
 

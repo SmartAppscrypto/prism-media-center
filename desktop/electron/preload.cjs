@@ -34,8 +34,6 @@ contextBridge.exposeInMainWorld('prismNativePlayer', {
   setPaused: (paused) => ipcRenderer.invoke('prism-native-pause', paused),
   seek: (milliseconds) => ipcRenderer.invoke('prism-native-seek', milliseconds),
   setVolume: (volume) => ipcRenderer.invoke('prism-native-volume', volume),
-  addSubtitle: (subtitleUrl) => ipcRenderer.invoke('prism-native-subtitle-add', subtitleUrl),
-  selectSubtitle: (track) => ipcRenderer.invoke('prism-native-subtitle-select', track),
   disableSubtitles: () => ipcRenderer.invoke('prism-native-subtitle-off'),
   stop: () => ipcRenderer.invoke('prism-native-stop')
 });

@@ -8,6 +8,8 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 
 namespace {
 
@@ -25,11 +27,6 @@ enum libvlc_state_t {
   libvlc_Stopped,
   libvlc_Ended,
   libvlc_Error
-};
-
-enum libvlc_media_slave_type_t {
-  libvlc_media_slave_type_subtitle = 0,
-  libvlc_media_slave_type_audio = 1
 };
 
 struct VlcApi {
@@ -51,7 +48,6 @@ struct VlcApi {
   libvlc_time_t (__cdecl *getTime)(libvlc_media_player_t*) = nullptr;
   int (__cdecl *setTime)(libvlc_media_player_t*, libvlc_time_t) = nullptr;
   libvlc_time_t (__cdecl *getLength)(libvlc_media_player_t*) = nullptr;
-  int (__cdecl *addSlave)(libvlc_media_player_t*, libvlc_media_slave_type_t, const char*, bool) = nullptr;
   int (__cdecl *getSubtitleTrack)(libvlc_media_player_t*) = nullptr;
   int (__cdecl *setSubtitleTrack)(libvlc_media_player_t*, int) = nullptr;
   int (__cdecl *getVolume)(libvlc_media_player_t*) = nullptr;
@@ -65,6 +61,15 @@ HWND parentWindow = nullptr;
 HWND videoWindow = nullptr;
 std::string lastError;
 std::atomic<uint64_t> subtitleCommandGeneration{0};
+std::thread subtitleWorker;
+std::mutex subtitleWaitMutex;
+std::condition_variable subtitleWake;
+
+void cancelSubtitleWorker() {
+  ++subtitleCommandGeneration;
+  subtitleWake.notify_all();
+  if (subtitleWorker.joinable()) subtitleWorker.join();
+}
 
 #define LOAD_VLC(symbol, field) \
   api.field = reinterpret_cast<decltype(api.field)>(GetProcAddress(api.library, symbol)); \
@@ -238,7 +243,6 @@ bool loadRuntime(const std::string& libraryPath, const std::string& pluginPath,
   LOAD_VLC("libvlc_media_player_get_time", getTime);
   LOAD_VLC("libvlc_media_player_set_time", setTime);
   LOAD_VLC("libvlc_media_player_get_length", getLength);
-  LOAD_VLC("libvlc_media_player_add_slave", addSlave);
   LOAD_VLC("libvlc_video_get_spu", getSubtitleTrack);
   LOAD_VLC("libvlc_video_set_spu", setSubtitleTrack);
   LOAD_VLC("libvlc_audio_get_volume", getVolume);
@@ -265,17 +269,21 @@ bool loadRuntime(const std::string& libraryPath, const std::string& pluginPath,
 }
 
 void scheduleSubtitleTrack(int track) {
-  const uint64_t generation = ++subtitleCommandGeneration;
-  std::thread([generation, track]() {
+  cancelSubtitleWorker();
+  const uint64_t generation = subtitleCommandGeneration.load();
+  subtitleWorker = std::thread([generation, track]() {
     const int delays[] = {0, 250, 700, 1400};
     int elapsed = 0;
     for (const int delay : delays) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(delay - elapsed));
+      std::unique_lock<std::mutex> lock(subtitleWaitMutex);
+      if (subtitleWake.wait_for(lock, std::chrono::milliseconds(delay - elapsed), [generation]() {
+        return generation != subtitleCommandGeneration.load();
+      })) return;
       elapsed = delay;
       if (!player || generation != subtitleCommandGeneration.load()) return;
       api.setSubtitleTrack(player, track);
     }
-  }).detach();
+  });
 }
 
 napi_value start(napi_env env, napi_callback_info info) {
@@ -294,6 +302,7 @@ napi_value start(napi_env env, napi_callback_info info) {
   if (!loadRuntime(libraryPath, pluginPath, subtitleColor, subtitleSize, subtitleBackground)) return jsString(env, lastError);
   if (!attachVideoWindow(parent)) return jsString(env, lastError);
 
+  cancelSubtitleWorker();
   api.stop(player);
   libvlc_media_t* media = api.newLocation(instance, url.c_str());
   if (!media) return jsString(env, "libVLC could not open this media URL.");
@@ -323,7 +332,7 @@ napi_value runtimeCheck(napi_env env, napi_callback_info info) {
 }
 
 napi_value stop(napi_env env, napi_callback_info) {
-  ++subtitleCommandGeneration;
+  cancelSubtitleWorker();
   if (player) api.stop(player);
   if (videoWindow) ShowWindow(videoWindow, SW_HIDE);
   napi_value undefined;
@@ -369,37 +378,9 @@ napi_value setVolume(napi_env env, napi_callback_info info) {
   return jsBoolean(env, player && api.setVolume(player, std::max(0, std::min(125, volume))) == 0);
 }
 
-napi_value addSubtitle(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value argv[1];
-  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-  if (!player || !argc) return jsBoolean(env, false);
-  ++subtitleCommandGeneration;
-  const std::string url = stringArg(env, argv[0]);
-  const libvlc_state_t previousState = api.getState(player);
-  const libvlc_time_t previousTime = api.getTime(player);
-  const bool wasPlaying = previousState == libvlc_Playing || previousState == libvlc_Opening || previousState == libvlc_Buffering;
-  const bool added = api.addSlave(player, libvlc_media_slave_type_subtitle, url.c_str(), true) == 0;
-  if (added && wasPlaying) {
-    api.play(player);
-    if (previousTime > 0) api.setTime(player, previousTime);
-  }
-  return jsBoolean(env, added);
-}
-
 napi_value disableSubtitles(napi_env env, napi_callback_info) {
   if (!player) return jsBoolean(env, false);
   scheduleSubtitleTrack(-1);
-  return jsBoolean(env, true);
-}
-
-napi_value selectSubtitle(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value argv[1];
-  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-  int32_t track = -1;
-  if (!player || !argc || napi_get_value_int32(env, argv[0], &track) != napi_ok || track < 0) return jsBoolean(env, false);
-  scheduleSubtitleTrack(track);
   return jsBoolean(env, true);
 }
 
@@ -433,7 +414,7 @@ napi_value inspectParent(napi_env env, napi_callback_info info) {
 }
 
 void cleanup(void*) {
-  ++subtitleCommandGeneration;
+  cancelSubtitleWorker();
   if (player) { api.stop(player); api.releasePlayer(player); player = nullptr; }
   if (instance) { api.releaseInstance(instance); instance = nullptr; }
   if (videoWindow) { DestroyWindow(videoWindow); videoWindow = nullptr; parentWindow = nullptr; }
@@ -450,8 +431,6 @@ napi_value initialize(napi_env env, napi_value exports) {
     {"setPaused", nullptr, setPaused, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"setTime", nullptr, setTime, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"setVolume", nullptr, setVolume, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"addSubtitle", nullptr, addSubtitle, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"selectSubtitle", nullptr, selectSubtitle, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"disableSubtitles", nullptr, disableSubtitles, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"state", nullptr, state, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"inspectParent", nullptr, inspectParent, nullptr, nullptr, nullptr, napi_default, nullptr}

@@ -9,9 +9,15 @@ const password = randomUUID();
 // Public info becomes available before database startup completes.
 let ready = false;
 for (let attempt = 0; attempt < 90; attempt += 1) {
-  const response = await fetch(base + '/Startup/User');
-  if (response.ok) { ready = true; break; }
-  assert.equal(response.status, 503, `Unexpected startup response: ${response.status}`);
+  let response;
+  try { response = await fetch(base + '/Startup/User', { signal: AbortSignal.timeout(5000) }); }
+  catch (error) {
+    // The startup listener can restart while migrations finish. Only this
+    // read-only readiness probe retries; setup/authentication failures fail CI.
+    if (!(error instanceof TypeError) && error.name !== 'TimeoutError') throw error;
+  }
+  if (response?.ok) { ready = true; break; }
+  if (response) assert.equal(response.status, 503, `Unexpected startup response: ${response.status}`);
   await new Promise(resolve => setTimeout(resolve, 2000));
 }
 assert.ok(ready, 'Server did not finish initial database startup');

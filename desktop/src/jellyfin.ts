@@ -35,7 +35,7 @@ function authorization(token?: string) {
     `Client="Prism"`,
     `Device="Desktop"`,
     `DeviceId="${deviceId()}"`,
-    `Version="0.14.3"`
+    `Version="0.15.0"`
   ];
   if (token) parts.push(`Token="${token}"`);
   return `MediaBrowser ${parts.join(', ')}`;
@@ -51,6 +51,7 @@ async function api<T>(serverUrl: string, path: string, init: RequestInit = {}, t
   const response = await fetch(`${normalizedUrl(serverUrl)}${path}`, {
     ...init,
     redirect: 'error',
+    signal: init.signal ?? AbortSignal.timeout(20000),
     headers: {
       Accept: 'application/json',
       Authorization: authorization(token),
@@ -84,11 +85,13 @@ export async function uploadHomeVideoArtwork(
   session: PrismSession,
   imageType: 'poster' | 'backdrop',
   dataUrl: string
-): Promise<{ updatedAt: number }> {
+): Promise<{ updatedAt: number; warning?: string }> {
   let response: Response;
   try {
     response = await fetch(`${artworkServiceUrl(session.serverUrl)}/items/${encodeURIComponent(item.id)}/artwork`, {
       method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(30000),
       headers: {
         Accept: 'application/json',
         Authorization: authorization(session.accessToken),
@@ -97,17 +100,17 @@ export async function uploadHomeVideoArtwork(
       body: JSON.stringify({ imageType, dataUrl })
     });
   } catch {
-    throw new Error('PRISM Artwork is not reachable. Update the Synology project and make sure port 8097 is available.');
+    throw new Error('PRISM Artwork is not reachable. Enable the optional artwork service on your server and make sure port 8097 is available.');
   }
-  const result = await response.json().catch(() => ({})) as { updatedAt?: number; error?: string };
+  const result = await response.json().catch(() => ({})) as { updatedAt?: number; error?: string; warning?: string };
   if (!response.ok) throw new Error(result.error || `Artwork service returned ${response.status}.`);
-  return { updatedAt: result.updatedAt ?? Date.now() };
+  return { updatedAt: result.updatedAt ?? Date.now(), warning: result.warning };
 }
 
 export async function getViews(session: PrismSession): Promise<LibraryView[]> {
   const result = await api<{ Items: Array<Record<string, unknown>> }>(
     session.serverUrl,
-    `/Users/${session.userId}/Views`,
+    `/Users/${encodeURIComponent(session.userId)}/Views`,
     {},
     session.accessToken
   );
@@ -140,7 +143,7 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
   if (view) params.set('ParentId', view.id);
   const result = await api<{ Items: Array<Record<string, unknown>> }>(
     session.serverUrl,
-    `/Users/${session.userId}/Items?${params}`,
+    `/Users/${encodeURIComponent(session.userId)}/Items?${params}`,
     {},
     session.accessToken
   );
@@ -164,9 +167,9 @@ export async function getLibrary(session: PrismSession, view?: LibraryView): Pro
       overview: typeof item.Overview === 'string' ? item.Overview : undefined,
       type: (item.Type as MediaItem['type']) ?? 'Video',
       hue: (index * 47 + 195) % 360,
-      imageUrl: `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}`,
+      imageUrl: `${session.serverUrl}/Items/${encodeURIComponent(id)}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}`,
       backdropUrl: backdropTags?.length
-        ? `${session.serverUrl}/Items/${id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
+        ? `${session.serverUrl}/Items/${encodeURIComponent(id)}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
         : undefined,
       musicBrainzAlbumId: providerIds?.MusicBrainzAlbum,
       musicBrainzReleaseGroupId: providerIds?.MusicBrainzReleaseGroup,
@@ -218,9 +221,9 @@ function mapMediaItem(item: Record<string, unknown>, session: PrismSession, inde
     overview: typeof item.Overview === 'string' ? item.Overview : undefined,
     type: (item.Type as MediaItem['type']) ?? 'Movie',
     hue: (index * 47 + 195) % 360,
-    imageUrl: `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}`,
+    imageUrl: `${session.serverUrl}/Items/${encodeURIComponent(id)}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}`,
     backdropUrl: backdropTags?.length
-      ? `${session.serverUrl}/Items/${id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
+      ? `${session.serverUrl}/Items/${encodeURIComponent(id)}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
       : undefined,
     musicBrainzAlbumId: providerIds?.MusicBrainzAlbum,
     musicBrainzReleaseGroupId: providerIds?.MusicBrainzReleaseGroup
@@ -239,7 +242,7 @@ export async function getAlbumTracks(album: MediaItem, session: PrismSession): P
   });
   const result = await api<{ Items: Array<Record<string, unknown>> }>(
     session.serverUrl,
-    `/Users/${session.userId}/Items?${params}`,
+    `/Users/${encodeURIComponent(session.userId)}/Items?${params}`,
     {},
     session.accessToken
   );
@@ -257,7 +260,7 @@ export async function getAllAudioTracks(session: PrismSession): Promise<MediaIte
   });
   const result = await api<{ Items: Array<Record<string, unknown>> }>(
     session.serverUrl,
-    `/Users/${session.userId}/Items?${params}`,
+    `/Users/${encodeURIComponent(session.userId)}/Items?${params}`,
     {},
     session.accessToken
   );
@@ -266,6 +269,7 @@ export async function getAllAudioTracks(session: PrismSession): Promise<MediaIte
 
 export async function getServerLyrics(track: MediaItem, session: PrismSession): Promise<TrackLyrics | null> {
   const response = await fetch(`${normalizedUrl(session.serverUrl)}/Audio/${encodeURIComponent(track.id)}/Lyrics`, {
+    redirect: 'error', signal: AbortSignal.timeout(20000),
     headers: { Accept: 'application/json', Authorization: authorization(session.accessToken) }
   });
   if (response.status === 404) return null;
@@ -296,7 +300,7 @@ export function audioPlaybackUrl(track: MediaItem, session: PrismSession) {
 export async function getItemDetails(item: MediaItem, session: PrismSession): Promise<MediaDetails> {
   const result = await api<Record<string, unknown>>(
     session.serverUrl,
-    `/Users/${session.userId}/Items/${item.id}?Fields=People,Studios,Genres,ProductionLocations,ProviderIds,Taglines`,
+    `/Users/${encodeURIComponent(session.userId)}/Items/${item.id}?Fields=People,Studios,Genres,ProductionLocations,ProviderIds,Taglines`,
     {},
     session.accessToken
   );
@@ -312,7 +316,7 @@ export async function getItemDetails(item: MediaItem, session: PrismSession): Pr
         name: String(person.Name ?? 'Unknown'),
         role: typeof person.Role === 'string' ? person.Role : undefined,
         type: typeof person.Type === 'string' ? person.Type : undefined,
-        imageUrl: id ? `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=320&quality=86&api_key=${encodeURIComponent(session.accessToken)}` : undefined
+        imageUrl: id ? `${session.serverUrl}/Items/${encodeURIComponent(id)}/Images/Primary?maxWidth=320&quality=86&api_key=${encodeURIComponent(session.accessToken)}` : undefined
       };
     }),
     studios: studios.map((studio) => String(studio.Name ?? '')).filter(Boolean),
@@ -337,7 +341,7 @@ export async function getSimilarItems(item: MediaItem, session: PrismSession): P
   });
   const result = await api<{ Items?: Array<Record<string, unknown>> }>(
     session.serverUrl,
-    `/Items/${item.id}/Similar?${params}`,
+    `/Items/${encodeURIComponent(item.id)}/Similar?${params}`,
     {},
     session.accessToken
   );
@@ -369,7 +373,7 @@ export async function getPersonMovies(person: MediaPerson, session: PrismSession
   });
   const result = await api<{ Items?: Array<Record<string, unknown>> }>(
     session.serverUrl,
-    `/Users/${session.userId}/Items?${params}`,
+    `/Users/${encodeURIComponent(session.userId)}/Items?${params}`,
     {},
     session.accessToken
   );
@@ -382,7 +386,7 @@ export async function getSeriesEpisodes(series: MediaItem, session: PrismSession
   const seriesIds = series.seriesIds?.length ? series.seriesIds : [series.id];
   const results = await Promise.all(seriesIds.map((seriesId) => api<{ Items: Array<Record<string, unknown>> }>(
     session.serverUrl,
-    `/Shows/${seriesId}/Episodes?UserId=${encodeURIComponent(session.userId)}&Fields=Overview,RunTimeTicks,PrimaryImageAspectRatio`,
+    `/Shows/${encodeURIComponent(seriesId)}/Episodes?UserId=${encodeURIComponent(session.userId)}&Fields=Overview,RunTimeTicks,PrimaryImageAspectRatio`,
     {},
     session.accessToken
   )));
@@ -397,7 +401,7 @@ export async function getSeriesEpisodes(series: MediaItem, session: PrismSession
       overview: typeof episode.Overview === 'string' ? episode.Overview : undefined,
       type: 'Episode' as const,
       hue: series.hue,
-      imageUrl: `${session.serverUrl}/Items/${id}/Images/Primary?maxWidth=720&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
+      imageUrl: `${session.serverUrl}/Items/${encodeURIComponent(id)}/Images/Primary?maxWidth=720&quality=88&api_key=${encodeURIComponent(session.accessToken)}`
     };
   });
   const unique = new Map<string, MediaItem>();
@@ -471,7 +475,7 @@ function mapPlaybackDetails(item: MediaItem, source: JellyfinMediaSource): Playb
 export async function getPlaybackVersions(item: MediaItem, session: PrismSession): Promise<PlaybackDetails[]> {
   const result = await api<{
     MediaSources?: JellyfinMediaSource[];
-  }>(session.serverUrl, `/Items/${item.id}/PlaybackInfo?UserId=${encodeURIComponent(session.userId)}`, {}, session.accessToken);
+  }>(session.serverUrl, `/Items/${encodeURIComponent(item.id)}/PlaybackInfo?UserId=${encodeURIComponent(session.userId)}`, {}, session.accessToken);
   const sources = result.MediaSources?.filter((source) => !/^\[?trailer(?:-|\]|\s)/i.test(source.Name?.trim() ?? '')) ?? [];
   return (sources.length ? sources : result.MediaSources?.slice(0, 1) ?? [{}]).map((source) => mapPlaybackDetails(item, source));
 }
@@ -550,7 +554,7 @@ export function directPlaybackUrl(item: MediaItem, session: PrismSession, detail
     DeviceId: deviceId(),
     MediaSourceId: details.mediaSourceId
   });
-  return `${session.serverUrl}/Videos/${item.id}/stream.${encodeURIComponent(extension)}?${params}`;
+  return `${session.serverUrl}/Videos/${encodeURIComponent(item.id)}/stream.${encodeURIComponent(extension)}?${params}`;
 }
 
 export function adaptivePlaybackUrl(item: MediaItem, session: PrismSession, details: PlaybackDetails) {
@@ -573,11 +577,11 @@ export function adaptivePlaybackUrl(item: MediaItem, session: PrismSession, deta
     AllowAudioStreamCopy: 'true',
     EnableAutoStreamCopy: 'true'
   });
-  return `${session.serverUrl}/Videos/${item.id}/master.m3u8?${params}`;
+  return `${session.serverUrl}/Videos/${encodeURIComponent(item.id)}/master.m3u8?${params}`;
 }
 
 export function subtitleUrl(item: MediaItem, session: PrismSession, mediaSourceId: string, streamIndex: number) {
-  return `${session.serverUrl}/Videos/${item.id}/${encodeURIComponent(mediaSourceId)}/Subtitles/${streamIndex}/0/Stream.vtt?api_key=${encodeURIComponent(session.accessToken)}`;
+  return `${session.serverUrl}/Videos/${encodeURIComponent(item.id)}/${encodeURIComponent(mediaSourceId)}/Subtitles/${streamIndex}/0/Stream.vtt?api_key=${encodeURIComponent(session.accessToken)}`;
 }
 
 export async function searchRemoteSubtitles(item: MediaItem, session: PrismSession, language = 'eng'): Promise<RemoteSubtitle[]> {
@@ -601,6 +605,7 @@ export async function searchRemoteSubtitles(item: MediaItem, session: PrismSessi
 export async function downloadRemoteSubtitle(item: MediaItem, session: PrismSession, subtitleId: string) {
   const response = await fetch(`${normalizedUrl(session.serverUrl)}/Items/${encodeURIComponent(item.id)}/RemoteSearch/Subtitles/${encodeURIComponent(subtitleId)}`, {
     method: 'POST',
+    redirect: 'error', signal: AbortSignal.timeout(20000),
     headers: { Authorization: authorization(session.accessToken) }
   });
   if (!response.ok) throw new Error(`Server returned ${response.status}.`);

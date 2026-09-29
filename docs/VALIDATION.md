@@ -1,5 +1,7 @@
 # Release validation - PRISM 0.15.0 preview
 
+For subsequent source changes, see the [application audit](AUDIT-2026-09-29.md). The results below describe the previously published preview, not the audit branch or updated installers.
+
 29 September 2026.
 
 - TypeScript/Vite production build: passed.

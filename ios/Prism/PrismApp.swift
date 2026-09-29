@@ -66,6 +66,8 @@ final class LibraryModel {
     private var deviceID = UUID().uuidString
     private let network = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
     private var selectionTask: Task<Void, Never>?
+    private var sessionRevision = 0
+    private var reloadRevision = 0
 
     func endpoint(_ path: String, query: [URLQueryItem] = []) throws -> URL {
         guard var parts = URLComponents(string: server.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -94,23 +96,31 @@ final class LibraryModel {
         return try decoder.decode(T.self, from: data)
     }
     func signIn() async {
+        guard !busy else { return }
+        let revision = sessionRevision
         busy = true; error = ""
-        defer { busy = false; password = "" }
+        defer { if revision == sessionRevision { busy = false; password = "" } }
         do {
             let login: Login = try await request("Users/AuthenticateByName", body: JSONEncoder().encode(["Username": username, "Pw": password]))
+            guard revision == sessionRevision else { return }
             token = login.AccessToken; userID = login.User.Id
             await reload()
         } catch { self.error = "Could not sign in. Check your server address, network access and account. Use HTTPS for a remote server." }
     }
     func reload() async {
-        busy = true; defer { busy = false }
+        guard !token.isEmpty else { return }
+        reloadRevision += 1
+        let revision = reloadRevision
+        let session = sessionRevision
+        busy = true; defer { if revision == reloadRevision && session == sessionRevision { busy = false } }
         do {
             let result: Items = try await request("Users/\(userID)/Items", query: [
                 .init(name: "Recursive", value: "true"), .init(name: "IncludeItemTypes", value: "Movie,Series,Video"),
                 .init(name: "Fields", value: "Overview,ProviderIds"), .init(name: "SortBy", value: "SortName")
             ])
+            guard revision == reloadRevision && session == sessionRevision else { return }
             items = result.Items
-        } catch { self.error = "Your library could not be loaded. Check the server and retry." }
+        } catch { if revision == reloadRevision && session == sessionRevision { self.error = "Your library could not be loaded. Check the server and retry." } }
     }
     func select(_ item: Media) {
         selectionTask?.cancel(); selected = item; episodes = []; finances = nil
@@ -120,7 +130,7 @@ final class LibraryModel {
                     let result: Items = try await request("Shows/\(item.id)/Episodes", query: [.init(name: "userId", value: userID), .init(name: "Fields", value: "Overview,ProviderIds")])
                     if !Task.isCancelled { episodes = result.Items }
                 }
-                if !tmdbToken.isEmpty, let id = item.ProviderIds?["Tmdb"] ?? item.ProviderIds?["tmdb"], Int(id) != nil {
+                if item.Type == "Movie", !tmdbToken.isEmpty, let id = item.ProviderIds?["Tmdb"] ?? item.ProviderIds?["tmdb"], Int(id) != nil {
                     var request = URLRequest(url: URL(string: "https://api.themoviedb.org/3/movie/\(id)")!)
                     request.setValue("Bearer \(tmdbToken)", forHTTPHeaderField: "Authorization")
                     let (data, response) = try await network.data(for: request)
@@ -149,10 +159,11 @@ final class LibraryModel {
         } catch { self.error = "The media address is invalid." }
     }
     func stop() {
-        player.pause(); player.replaceCurrentItem(with: nil); playing = nil
+        player.pause(); player.replaceCurrentItem(with: nil); playing = nil; seconds = 0; duration = 0
         if let observer { player.removeTimeObserver(observer); self.observer = nil }
     }
     func signOut() {
+        sessionRevision += 1; reloadRevision += 1; busy = false; error = ""; episodes = []; finances = nil; password = ""
         stop(); selectionTask?.cancel(); token = ""; userID = ""; tmdbToken = ""; items = []; selected = nil
     }
 }
@@ -240,7 +251,7 @@ struct PrismRoot: View {
                 Text("PRISM").font(.headline)
                 Spacer()
                 if model.playing != nil { Button("Now playing") { if let item = model.playing { model.select(item); pane = 1 } } }
-                Button("Refresh") { Task { await model.reload() } }
+                Button("Refresh") { Task { await model.reload() } }.disabled(model.busy)
                 Button("Sign out") { model.signOut() }
             }.padding(.horizontal)
             Picker("Browse", selection: $pane) { Text("Library").tag(0); Text("Details").tag(1) }.pickerStyle(.segmented).padding(.horizontal)

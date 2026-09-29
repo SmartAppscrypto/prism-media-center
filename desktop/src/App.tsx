@@ -55,7 +55,24 @@ const defaultPreferences: PrismPreferences = {
 
 function loadPreferences(): PrismPreferences {
   try {
-    return { ...defaultPreferences, ...JSON.parse(localStorage.getItem(preferencesKey) ?? '{}') } as PrismPreferences;
+    const stored = JSON.parse(localStorage.getItem(preferencesKey) ?? '{}');
+    const result = { ...defaultPreferences };
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return result;
+    for (const key of ['showAllMedia', 'reducedMotion', 'autoEnglishSubtitles'] as const) {
+      if (typeof stored[key] === 'boolean') result[key] = stored[key];
+    }
+    for (const key of ['libraryOrder', 'hiddenLibraryIds'] as const) {
+      if (Array.isArray(stored[key])) result[key] = [...new Set<string>(stored[key].filter((id: unknown) => typeof id === 'string'))];
+    }
+    const choices = {
+      subtitleColor: ['white', 'warm', 'yellow', 'cyan'], subtitleSize: ['small', 'medium', 'large'],
+      subtitleBackground: ['none', 'soft', 'strong'], skipSeconds: [10, 15, 30],
+      gridDensity: ['cinematic', 'comfortable', 'compact'], defaultSort: ['alphabetical', 'random', 'released']
+    };
+    for (const key of Object.keys(choices) as Array<keyof typeof choices>) {
+      if ((choices[key] as unknown[]).includes(stored[key])) Object.assign(result, { [key]: stored[key] });
+    }
+    return result;
   } catch {
     return defaultPreferences;
   }
@@ -84,6 +101,7 @@ function windowDragProps() {
   return {
     onPointerDown(event: ReactPointerEvent<HTMLElement>) {
       if (event.button !== 0 || (event.target as HTMLElement).closest('button, input, select, a')) return;
+      if (!window.prismWindow) return;
       event.currentTarget.setPointerCapture(event.pointerId);
       window.prismWindow?.startDrag(event.screenX, event.screenY);
     },
@@ -91,7 +109,10 @@ function windowDragProps() {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) window.prismWindow?.moveDrag(event.screenX, event.screenY);
     },
     onPointerUp(event: ReactPointerEvent<HTMLElement>) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        window.prismWindow?.moveDrag(event.screenX, event.screenY);
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
       window.prismWindow?.endDrag();
     },
     onPointerCancel() {
@@ -141,13 +162,14 @@ function formatCodec(value?: string) {
 
 function Poster({ item, onSelect }: { item: MediaItem; onSelect?: (item: MediaItem) => void }) {
   const isAlbum = item.type === 'MusicAlbum' || item.type === 'Audio';
-  const style = item.imageUrl
-    ? { backgroundImage: `url("${item.imageUrl}")` }
-    : { '--hue': item.hue } as React.CSSProperties;
+  const [failedImage, setFailedImage] = useState<string>();
+  const imageUrl = item.imageUrl !== failedImage ? item.imageUrl : undefined;
+  const style = { '--hue': item.hue } as React.CSSProperties;
   const artwork = (
     <>
-      {!item.imageUrl && <span className="poster__geometry" />}
-      {!item.imageUrl && !isAlbum && <span className="poster__title">{item.title}</span>}
+      {imageUrl && <img className="poster__image" src={imageUrl} alt="" loading="lazy" onError={() => setFailedImage(imageUrl)} />}
+      {!imageUrl && <span className="poster__geometry" />}
+      {!imageUrl && !isAlbum && <span className="poster__title">{item.title}</span>}
       {!isAlbum && <span className="poster__year">{item.year}</span>}
       {isAlbum && (
         <span className="album-caption">
@@ -231,7 +253,7 @@ function normalizeArtwork(draft: ArtworkDraft, kind: ArtworkKind): Promise<strin
 function ArtworkEditor({ item, onClose, onSave }: {
   item: MediaItem;
   onClose: () => void;
-  onSave: (kind: ArtworkKind, dataUrl: string) => Promise<void>;
+  onSave: (kind: ArtworkKind, dataUrl: string) => Promise<string | undefined>;
 }) {
   const [drafts, setDrafts] = useState<Partial<Record<ArtworkKind, ArtworkDraft>>>({});
   const [saving, setSaving] = useState(false);
@@ -264,13 +286,15 @@ function ArtworkEditor({ item, onClose, onSave }: {
     setSaving(true);
     setStatus('PREPARING ARTWORK…');
     try {
+      const warnings: string[] = [];
       for (const [kind, draft] of entries) {
         const dataUrl = await normalizeArtwork(draft, kind);
         setStatus(`SAVING ${kind.toUpperCase()}…`);
-        await onSave(kind, dataUrl);
+        const warning = await onSave(kind, dataUrl);
+        if (warning) warnings.push(warning);
       }
-      setStatus('ARTWORK SAVED');
-      window.setTimeout(onClose, 650);
+      setStatus(warnings.length ? warnings.join(' ') : 'ARTWORK SAVED');
+      if (!warnings.length) onClose();
     } catch (reason) {
       setStatus(reason instanceof Error ? reason.message : 'Artwork could not be saved.');
     } finally {
@@ -283,7 +307,7 @@ function ArtworkEditor({ item, onClose, onSave }: {
       <button className="artwork-editor__scrim" onClick={saving ? undefined : onClose} aria-label="Close artwork editor" />
       <section className="artwork-editor__panel">
         <header><div><small>HOME VIDEO ARTWORK</small><h2 id="artwork-title">{item.title}</h2></div><button onClick={onClose} disabled={saving} aria-label="Close">×</button></header>
-        <p className="artwork-editor__intro">Drop images below. PRISM crops them locally, stores durable sidecars beside the video on your Synology, and keeps the previous revision.</p>
+        <p className="artwork-editor__intro">Drop images below. PRISM crops them locally, stores artwork beside the video on your server, and keeps the previous revision.</p>
         <div className="artwork-editor__slots">
           {(['poster', 'backdrop'] as const).map((kind) => {
             const draft = drafts[kind];
@@ -1073,6 +1097,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
   const nativeModeRef = useRef(false);
   const currentTimeRef = useRef(0);
   const durationRef = useRef(0);
+  const audibleVolumeRef = useRef(1);
   const [paused, setPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -1115,7 +1140,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
     }
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) void video.play();
+    if (video.paused) void video.play().catch(() => setPlaybackError('Playback could not resume. Try opening this title again.'));
     else video.pause();
   }, [paused]);
 
@@ -1144,7 +1169,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
       usingDirectPlay = false;
       setPlaybackError('');
       const streamMimeType = directStreamMimeType(details);
-      if (!streamMimeType || !MediaSource.isTypeSupported(streamMimeType)) {
+      if (!streamMimeType || typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported(streamMimeType)) {
         const format = [details.videoCodec?.toUpperCase(), details.audioCodec?.toUpperCase()].filter(Boolean).join(' / ');
         setPaused(true);
         setPlaybackError(`This PRISM desktop decoder does not support ${format || 'these media streams'}. Your server preserved the original streams, so no NAS transcoding was used.`);
@@ -1218,7 +1243,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
       } else {
         startAdaptivePlayback(details);
       }
-    }).catch(() => setPlaybackError('Prism could not prepare this title for playback.'));
+    }).catch(() => { if (!cancelled) setPlaybackError('Prism could not prepare this title for playback.'); });
 
     return () => {
       cancelled = true;
@@ -1227,6 +1252,9 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
       setNativeReady(false);
       video.removeEventListener('error', onVideoError);
       hls?.destroy();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
     };
   }, [item, preferences.autoEnglishSubtitles, preferredMediaSourceId, session]);
 
@@ -1241,7 +1269,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
       }
       const controller = new AbortController();
       setSubtitleLoadStatus('Loading subtitle text…');
-      fetch(subtitleUrl(item, session, mediaSourceId, selectedSubtitle), { signal: controller.signal })
+      fetch(subtitleUrl(item, session, mediaSourceId, selectedSubtitle), { redirect: 'error', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]) })
         .then((response) => {
           if (!response.ok) throw new Error(`Server returned ${response.status}.`);
           return response.text();
@@ -1307,27 +1335,33 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
   useEffect(() => {
     if (!nativeMode || !window.prismNativePlayer) return;
     let polling = false;
+    let cancelled = false;
     const poll = window.setInterval(async () => {
       if (polling) return;
       polling = true;
       try {
         const state = await window.prismNativePlayer!.state();
-        const nextTime = Math.max(0, state.timeMs / 1000);
-        const nextDuration = Math.max(0, state.durationMs / 1000);
+        if (cancelled) return;
+        const nextTime = Number.isFinite(state.timeMs) ? Math.max(0, state.timeMs / 1000) : 0;
+        const nextDuration = Number.isFinite(state.durationMs) ? Math.max(0, state.durationMs / 1000) : 0;
         currentTimeRef.current = nextTime;
         durationRef.current = nextDuration;
         setCurrentTime(nextTime);
         setDuration(nextDuration);
-        setVolume(Math.min(1, Math.max(0, state.volume / 100)));
+        const nextVolume = Number.isFinite(state.volume) ? Math.min(1, Math.max(0, state.volume / 100)) : 0;
+        if (nextVolume > 0) audibleVolumeRef.current = nextVolume;
+        setVolume(nextVolume);
         setMuted(state.volume === 0);
         setPaused(state.paused || (!state.playing && !state.ended));
         if (state.error) setPlaybackError(state.message || 'The PRISM native player could not decode this title.');
         if (state.ended) onClose();
+      } catch {
+        if (!cancelled) setPlaybackError('The player stopped responding. Close this title and try again.');
       } finally {
         polling = false;
       }
     }, 250);
-    return () => window.clearInterval(poll);
+    return () => { cancelled = true; window.clearInterval(poll); };
   }, [nativeMode, onClose]);
 
   useEffect(() => {
@@ -1338,6 +1372,9 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
   useEffect(() => {
     function onPlayerKeyDown(event: KeyboardEvent) {
       revealChrome();
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey
+        || (event.target instanceof Element && (event.target.closest('input, select, textarea, [contenteditable="true"]')
+          || (event.key === ' ' && event.target.closest('button'))))) return;
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault();
         seekBy(event.key === 'ArrowRight' ? preferences.skipSeconds : -preferences.skipSeconds);
@@ -1346,7 +1383,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
         togglePlayback();
       } else if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
-        window.prismWindow?.toggleFullscreen();
+        toggleFullscreen();
       }
     }
     window.addEventListener('keydown', onPlayerKeyDown);
@@ -1354,6 +1391,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
   }, [preferences.skipSeconds, revealChrome, seekBy, togglePlayback]);
 
   function updateVolume(nextVolume: number) {
+    if (nextVolume > 0) audibleVolumeRef.current = nextVolume;
     if (nativeModeRef.current) {
       void window.prismNativePlayer?.setVolume(nextVolume);
       setVolume(nextVolume);
@@ -1368,6 +1406,14 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
     setMuted(nextVolume === 0);
   }
 
+  function toggleFullscreen() {
+    if (window.prismWindow) window.prismWindow.toggleFullscreen();
+    else {
+      const request = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+      void request?.catch(() => setPlaybackError('Full screen is unavailable in this window.'));
+    }
+  }
+
   return (
     <div
       className={`player ${nativeMode ? 'player--native' : ''} ${chromeVisible ? '' : 'player--idle'}`}
@@ -1379,6 +1425,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
       onMouseMove={revealChrome}
       onMouseDown={revealChrome}
       onTouchStart={revealChrome}
+      onFocusCapture={revealChrome}
     >
       <div className="window-drag-region player__drag-region" aria-hidden="true" {...windowDragProps()} />
       <WindowControls />
@@ -1392,7 +1439,7 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
         onPlay={() => setPaused(false)}
         onPause={() => setPaused(true)}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-        onDurationChange={(event) => setDuration(event.currentTarget.duration)}
+        onDurationChange={(event) => setDuration(Number.isFinite(event.currentTarget.duration) ? Math.max(0, event.currentTarget.duration) : 0)}
         onVolumeChange={(event) => {
           setVolume(event.currentTarget.volume);
           setMuted(event.currentTarget.muted);
@@ -1443,16 +1490,12 @@ export function Player({ item, session, preferences, mediaSourceId: preferredMed
           aria-label="Playback position"
         />
         <span className="player__time" aria-label="Time remaining">{Number.isFinite(duration) && duration > 0 ? `−${formatClock(Math.max(0, duration - currentTime))} left` : "—"}</span>
-        <button onClick={() => {
-          if (window.prismWindow) window.prismWindow.toggleFullscreen();
-          else if (document.fullscreenElement) void document.exitFullscreen();
-          else void document.documentElement.requestFullscreen?.();
-        }} aria-label="Toggle full screen" title="Full screen (F)">⛶ FULL</button>
+        <button onClick={toggleFullscreen} aria-label="Toggle full screen" title="Full screen (F)">⛶ FULL</button>
         <button
           onClick={() => {
             if (nativeModeRef.current) {
               const nextMuted = !muted;
-              void window.prismNativePlayer?.setVolume(nextMuted ? 0 : (volume || 1));
+              void window.prismNativePlayer?.setVolume(nextMuted ? 0 : audibleVolumeRef.current);
               setMuted(nextMuted);
               return;
             }
@@ -1590,9 +1633,15 @@ export default function App() {
   const [libraryInputMode, setLibraryInputMode] = useState<'pointer' | 'keyboard'>('pointer');
   const wallRef = useRef<HTMLElement>(null);
   const scrollbarTimerRef = useRef<number | undefined>(undefined);
+  const libraryRequestRef = useRef(0);
+  const scanSessionRef = useRef(session);
+  useEffect(() => {
+    scanSessionRef.current = session;
+    return () => { scanSessionRef.current = null; };
+  }, [session]);
 
   useEffect(() => {
-    localStorage.setItem(preferencesKey, JSON.stringify(preferences));
+    try { localStorage.setItem(preferencesKey, JSON.stringify(preferences)); } catch { /* Storage may be unavailable or full. */ }
   }, [preferences]);
 
   useEffect(() => {
@@ -1616,7 +1665,12 @@ export default function App() {
     void window.prismMetadata?.hasTmdbToken().then(setTmdbConfigured);
   }, [drawerPage, menuOpen]);
 
-  useEffect(() => window.prismMetadata?.onProductionProgress(setProductionScan), []);
+  useEffect(() => {
+    if (!productionScanRunning || !session) return;
+    return window.prismMetadata?.onProductionProgress((progress) => {
+      if (scanSessionRef.current === session) setProductionScan(progress);
+    });
+  }, [productionScanRunning, session]);
 
   useEffect(() => {
     setAlbumMetadata(null);
@@ -1677,7 +1731,7 @@ export default function App() {
     Promise.all([getItemDetails(selected, session), getSimilarItems(selected, session)]).then(async ([details, similar]) => {
       if (cancelled) return;
       const [financials, production] = await Promise.all([
-        window.prismMetadata?.getTmdbMovie({ tmdbId: details.tmdbId, imdbId: details.imdbId }),
+        selected.type === 'Movie' ? window.prismMetadata?.getTmdbMovie({ tmdbId: details.tmdbId, imdbId: details.imdbId }) : undefined,
         window.prismMetadata?.getProduction({ title: selected.title, year: selected.year, scrapeIfMissing: true })
       ]);
       if (cancelled) return;
@@ -1715,22 +1769,25 @@ export default function App() {
       setProductionScanStatus('Scanning is available in the installed app while connected to your server.');
       return;
     }
+    const isCurrent = () => scanSessionRef.current === session;
     setProductionScanRunning(true);
     setProductionScan(null);
     setProductionScanStatus('PREPARING MOVIE LIBRARY…');
     try {
       const movieView = views.find((view) => view.collectionType === 'movies' || view.name.toLowerCase() === 'movies');
       const movies = activeView?.id === movieView?.id ? items : await getLibrary(session, movieView);
+      if (!isCurrent()) return;
       const targets = movies.filter((item) => item.type === 'Movie' && item.year).map((item) => ({ title: item.title, year: item.year }));
       setProductionScanStatus('SCANNING MISSING TITLES…');
       const result = await window.prismMetadata.scanProduction(targets);
+      if (!isCurrent()) return;
       setProductionScanStatus(result.ok
         ? `COMPLETE · ${result.found || 0} FOUND · ${result.skipped || 0} ALREADY CACHED · ${result.missing || 0} UNAVAILABLE`
         : result.error || 'The scan could not be completed.');
     } catch {
-      setProductionScanStatus('The movie library could not be prepared for scanning.');
+      if (isCurrent()) setProductionScanStatus('The movie library could not be prepared for scanning.');
     } finally {
-      setProductionScanRunning(false);
+      if (isCurrent()) setProductionScanRunning(false);
     }
   }
 
@@ -1739,6 +1796,7 @@ export default function App() {
       setLyricsScanStatus('Connect to PRISM Server before gathering lyrics.');
       return;
     }
+    const isCurrent = () => scanSessionRef.current === session;
     setLyricsScanRunning(true);
     setLyricsScan(null);
     setLyricsScanStatus('PREPARING MUSIC LIBRARY…');
@@ -1747,6 +1805,7 @@ export default function App() {
       let found = 0;
       let missing = 0;
       for (let index = 0; index < tracks.length; index += 1) {
+        if (!isCurrent()) return;
         const track = tracks[index];
         setLyricsScan({ current: index + 1, total: tracks.length, found, missing, title: track.title });
         try {
@@ -1756,14 +1815,15 @@ export default function App() {
         } catch {
           missing += 1;
         }
+        if (!isCurrent()) return;
         setLyricsScan({ current: index + 1, total: tracks.length, found, missing, title: track.title });
         await new Promise((resolve) => window.setTimeout(resolve, 90));
       }
-      setLyricsScanStatus(`COMPLETE · ${found} FOUND · ${missing} UNAVAILABLE`);
+      if (isCurrent()) setLyricsScanStatus(`COMPLETE · ${found} FOUND · ${missing} UNAVAILABLE`);
     } catch {
-      setLyricsScanStatus('The music library could not be prepared for lyric matching.');
+      if (isCurrent()) setLyricsScanStatus('The music library could not be prepared for lyric matching.');
     } finally {
-      setLyricsScanRunning(false);
+      if (isCurrent()) setLyricsScanRunning(false);
     }
   }
 
@@ -1789,6 +1849,9 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
+    const request = ++libraryRequestRef.current;
+    setLibraryLoading(true);
+    setLibraryError('');
     if (window.prismSession) void window.prismSession.save(session).catch(() => undefined);
     else localStorage.setItem(sessionKey, JSON.stringify(session));
     getViews(session).then(async (serverViews) => {
@@ -1796,14 +1859,14 @@ export default function App() {
       const firstVisible = ordered.find((view) => !preferences.hiddenLibraryIds.includes(view.id));
       const initialView = preferences.showAllMedia ? null : firstVisible ?? null;
       const library = await getLibrary(session, initialView ?? undefined);
-      if (!cancelled) {
+      if (!cancelled && request === libraryRequestRef.current) {
         setViews(serverViews);
         setActiveView(initialView);
         setItems(library);
       }
     }).catch((reason: unknown) => {
-      if (!cancelled) setLibraryError(reason instanceof Error ? reason.message : 'The library could not be loaded.');
-    });
+      if (!cancelled && request === libraryRequestRef.current) setLibraryError(reason instanceof Error ? reason.message : 'The library could not be loaded.');
+    }).finally(() => { if (!cancelled && request === libraryRequestRef.current) setLibraryLoading(false); });
     return () => { cancelled = true; };
   }, [session]);
 
@@ -1811,12 +1874,15 @@ export default function App() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         if (playingItem) setPlayingItem(null);
+        else if (artworkEditorOpen) setArtworkEditorOpen(false);
+        else if (menuOpen) setMenuOpen(false);
+        else if (moreOpen) setMoreOpen(false);
         else if (selected) setSelected(null);
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [playingItem, selected]);
+  }, [artworkEditorOpen, menuOpen, moreOpen, playingItem, selected]);
 
   const visibleItems = demo ? demoItems : items;
   const isMusicLibrary = activeView?.collectionType === 'music' || activeView?.name.toLowerCase() === 'music';
@@ -1825,7 +1891,10 @@ export default function App() {
   const sortedItems = useMemo(() => {
     const result = [...visibleItems];
     if (sortMode === 'released') {
-      const released = (item: MediaItem) => item.releaseDate ? Date.parse(item.releaseDate) : (item.year ?? 0) * 31_536_000_000;
+      const released = (item: MediaItem) => {
+        const date = Date.parse(item.releaseDate || `${item.year || 1}-01-01`);
+        return Number.isFinite(date) ? date : -Infinity;
+      };
       return result.sort((a, b) => released(b) - released(a) || compareTitles(a.title, b.title));
     }
     if (sortMode === 'random') {
@@ -1919,33 +1988,55 @@ export default function App() {
 
   function selectView(view: LibraryView | null) {
     if (!session) return;
+    const request = ++libraryRequestRef.current;
     setActiveView(view);
     setMenuOpen(false);
     setSelected(null);
     setLibraryError('');
     setLibraryLoading(true);
-    getLibrary(session, view ?? undefined).then(setItems).catch((reason: unknown) => {
-      setLibraryError(reason instanceof Error ? reason.message : 'The library could not be loaded.');
-    }).finally(() => setLibraryLoading(false));
+    setItems([]);
+    wallRef.current?.scrollTo({ top: 0 });
+    getLibrary(session, view ?? undefined).then((next) => {
+      if (request === libraryRequestRef.current) setItems(next);
+    }).catch((reason: unknown) => {
+      if (request === libraryRequestRef.current) setLibraryError(reason instanceof Error ? reason.message : 'The library could not be loaded.');
+    }).finally(() => { if (request === libraryRequestRef.current) setLibraryLoading(false); });
   }
 
   function disconnect() {
-    void window.prismSession?.clear();
+    scanSessionRef.current = null;
+    setProductionScanRunning(false);
+    setProductionScan(null);
+    setProductionScanStatus('');
+    setLyricsScanRunning(false);
+    setLyricsScan(null);
+    setLyricsScanStatus('');
+    ++libraryRequestRef.current;
+    void window.prismSession?.clear().catch(() => undefined);
     localStorage.removeItem(sessionKey);
     setSession(null);
     setDemo(false);
     setItems([]);
     setSelected(null);
+    setPlayingItem(null);
+    setViews([]);
+    setActiveView(null);
+    setMenuOpen(false);
+    setLibraryError('');
+    setLibraryLoading(false);
+    setArtworkEditorOpen(false);
+    setTmdbTokenDraft('');
   }
 
   async function saveHomeVideoArtwork(kind: ArtworkKind, dataUrl: string) {
     if (!selected || !session) throw new Error('Reconnect to PRISM Server before saving artwork.');
     const result = await uploadHomeVideoArtwork(selected, session, kind, dataUrl);
-    const imageUrl = `${session.serverUrl}/Items/${selected.id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
-    const backdropUrl = `${session.serverUrl}/Items/${selected.id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
+    const imageUrl = `${session.serverUrl}/Items/${encodeURIComponent(selected.id)}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
+    const backdropUrl = `${session.serverUrl}/Items/${encodeURIComponent(selected.id)}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
     const patch = kind === 'poster' ? { imageUrl } : { backdropUrl };
     setItems((current) => current.map((item) => item.id === selected.id ? { ...item, ...patch } : item));
     setSelected((current) => current?.id === selected.id ? { ...current, ...patch } : current);
+    return result.warning;
   }
 
   const dragRegion = <div className="window-drag-region" aria-hidden="true" {...windowDragProps()} />;
@@ -2000,8 +2091,8 @@ export default function App() {
 
       {!demo && (
         <>
-          <button className={`drawer-scrim ${menuOpen ? 'is-open' : ''}`} onClick={() => setMenuOpen(false)} aria-label="Close library menu" />
-          <aside className={`library-drawer ${menuOpen ? 'is-open' : ''}`} aria-hidden={!menuOpen}>
+          <button className={`drawer-scrim ${menuOpen ? 'is-open' : ''}`} tabIndex={-1} aria-hidden={!menuOpen} onClick={() => setMenuOpen(false)} aria-label="Close library menu" />
+          <aside className={`library-drawer ${menuOpen ? 'is-open' : ''}`} inert={!menuOpen} aria-hidden={!menuOpen}>
             <div className="library-drawer__top">
               <button className="wordmark" onClick={backToGalleryTop} title="Back to gallery top">PRISM</button>
               <div className="library-drawer__actions">
@@ -2068,7 +2159,7 @@ export default function App() {
                     </div>
                   )}
                   {lyricsScanStatus && <p className="production-scan-status" role="status">{lyricsScanStatus}</p>}
-                  <p className="settings-hint">Checks PRISM Server first, then privately caches missing synchronized lyrics on this Mac. Instrumental tracks are recognized automatically.</p>
+                  <p className="settings-hint">Checks PRISM Server first, then privately caches missing synchronized lyrics on this computer. Instrumental tracks are recognized automatically.</p>
                 </section>
 
                 <section className="settings-section">
@@ -2085,7 +2176,7 @@ export default function App() {
                     </div>
                   )}
                   {tmdbStatus && <p className="metadata-status" role="status">{tmdbStatus}</p>}
-                  <p className="settings-hint">Adds reported budget and revenue. Your token is encrypted in macOS secure storage.</p>
+                  <p className="settings-hint">Adds reported budget and revenue. Your token is encrypted in your computer's secure storage.</p>
                   <p className="tmdb-attribution">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
                   <div className="production-scan-control">
                     <div><strong>Production formats</strong><span>Camera, lenses, film stock and process</span></div>
@@ -2116,7 +2207,8 @@ export default function App() {
       )}
 
       {libraryError && <div className="library-error">{libraryError} <button onClick={disconnect}>Reconnect</button></div>}
-      {!libraryError && (libraryLoading || !visibleItems.length) && <div className="loading">DEVELOPING {activeView?.name?.toUpperCase() || 'YOUR LIBRARY'}…</div>}
+      {!libraryError && libraryLoading && <div className="loading" role="status">DEVELOPING {activeView?.name?.toUpperCase() || 'YOUR LIBRARY'}…</div>}
+      {!libraryError && !libraryLoading && !visibleItems.length && <div className="loading" role="status">No titles yet. Add media to this library in your server dashboard.</div>}
 
       <section
         ref={wallRef}

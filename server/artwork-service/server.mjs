@@ -1,5 +1,6 @@
 import http from 'node:http';
-import { mkdir, open, lstat, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, lstat, realpath, rename, copyFile, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -66,7 +67,7 @@ async function authenticatedItem(itemId, authorization) {
   return { Path: item.Path ?? item.path, Type: item.Type ?? item.type };
 }
 
-function resolveItemDirectory(item) {
+function resolveItemDirectory(item, root = artworkRoot) {
   const mediaPath = normalizePosix(item.Path || '');
   const relative = path.posix.relative(jellyfinMediaRoot, mediaPath);
   if (!mediaPath || relative.startsWith('..') || path.posix.isAbsolute(relative)) {
@@ -74,9 +75,9 @@ function resolveItemDirectory(item) {
   }
   if (!['Video', 'Movie'].includes(item.Type)) throw Object.assign(new Error('Only video artwork can be changed here.'), { status: 400 });
   const relativeDirectory = path.posix.dirname(relative);
-  const localDirectory = path.resolve(artworkRoot, relativeDirectory);
-  const rootPrefix = artworkRoot.endsWith(path.sep) ? artworkRoot : `${artworkRoot}${path.sep}`;
-  if (localDirectory !== artworkRoot && !localDirectory.startsWith(rootPrefix)) {
+  const localDirectory = path.resolve(root, relativeDirectory);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (localDirectory !== root && !localDirectory.startsWith(rootPrefix)) {
     throw Object.assign(new Error('The media path is outside the allowed artwork directory.'), { status: 403 });
   }
   const filename = path.posix.basename(relative);
@@ -119,20 +120,21 @@ async function rejectLink(target) {
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
 
-async function preservePrevious(target, directory, imageType) {
-  try { await stat(target); }
-  catch { return; }
+async function preservePrevious(target, directory, imageType, root) {
+  try { await lstat(target); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
   const metadata = path.join(directory, '.prism-artwork');
   await mkdir(metadata).catch((error) => { if (error.code !== 'EEXIST') throw error; });
-  await assertSafeDirectory(metadata);
+  await assertSafeDirectory(metadata, root);
   const history = path.join(metadata, 'history');
   await mkdir(history).catch((error) => { if (error.code !== 'EEXIST') throw error; });
-  await assertSafeDirectory(history);
+  await assertSafeDirectory(history, root);
   const stamp = new Date().toISOString().replaceAll(':', '-');
-  await rename(target, path.join(history, `${imageType}-${stamp}-${randomUUID()}.jpg`));
+  await copyFile(target, path.join(history, `${imageType}-${stamp}-${randomUUID()}.jpg`), constants.COPYFILE_EXCL);
 }
 
-async function saveArtwork(item, imageType, dataUrl) {
+const artworkWrites = new Map();
+export async function saveArtwork(item, imageType, dataUrl, root = artworkRoot) {
   if (!['poster', 'backdrop'].includes(imageType)) throw Object.assign(new Error('Unknown artwork type.'), { status: 400 });
   const match = /^data:image\/(jpeg|jpg);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
   if (!match) throw Object.assign(new Error('PRISM Server accepts normalized JPEG artwork only.'), { status: 415 });
@@ -140,27 +142,33 @@ async function saveArtwork(item, imageType, dataUrl) {
   if (bytes.length < 512 || bytes.length > 25 * 1024 * 1024 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
     throw Object.assign(new Error('The normalized artwork file is invalid or too large.'), { status: 400 });
   }
-  const { directory, stem } = resolveItemDirectory(item);
+  const { directory, stem } = resolveItemDirectory(item, root);
   const target = path.join(directory, `${stem}-${imageType}.jpg`);
-  const temporary = path.join(directory, `.${stem}-${imageType}.${process.pid}.${Date.now()}.tmp`);
-  await assertSafeDirectory(directory);
-  await rejectLink(target);
-  await preservePrevious(target, directory, `${stem}-${imageType}`);
-  try {
-    const handle = await open(temporary, 'wx', 0o644);
-    try { await handle.writeFile(bytes); await handle.sync(); }
-    finally { await handle.close(); }
-    await rename(temporary, target);
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
-  return target;
+  const write = (artworkWrites.get(target) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    const temporary = path.join(directory, `.${stem}-${imageType}.${randomUUID()}.tmp`);
+    await assertSafeDirectory(directory, root);
+    await rejectLink(target);
+    try {
+      const handle = await open(temporary, 'wx', 0o644);
+      try { await handle.writeFile(bytes); await handle.sync(); }
+      finally { await handle.close(); }
+      // Keep the old sidecar in place until the complete replacement can be renamed.
+      await preservePrevious(target, directory, `${stem}-${imageType}`, root);
+      await rename(temporary, target);
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+    }
+    return target;
+  });
+  artworkWrites.set(target, write);
+  try { return await write; }
+  finally { if (artworkWrites.get(target) === write) artworkWrites.delete(target); }
 }
 
 async function refreshItem(itemId, authorization) {
   const params = new URLSearchParams({ Recursive: 'false', MetadataRefreshMode: 'None', ImageRefreshMode: 'Full', ReplaceAllImages: 'false' });
-  await jellyfin(`/Items/${encodeURIComponent(itemId)}/Refresh?${params}`, authorization, { method: 'POST' });
+  const response = await jellyfin(`/Items/${encodeURIComponent(itemId)}/Refresh?${params}`, authorization, { method: 'POST' });
+  if (!response.ok) throw new Error('Server refresh failed.');
 }
 
 export const server = http.createServer(async (request, response) => {
@@ -195,8 +203,10 @@ export const server = http.createServer(async (request, response) => {
     const item = await authenticatedItem(itemId, authorization);
     const body = await readJsonBody(request);
     await saveArtwork(item, body.imageType, body.dataUrl);
-    await refreshItem(itemId, authorization);
-    send(response, 200, { ok: true, imageType: body.imageType, updatedAt: Date.now() }, origin);
+    let warning;
+    try { await refreshItem(itemId, authorization); }
+    catch { warning = 'Artwork was saved, but the server could not refresh it. Run a library scan to display it.'; }
+    send(response, 200, { ok: true, warning, imageType: body.imageType, updatedAt: Date.now() }, origin);
   } catch (error) {
     console.error(error);
     send(response, Number(error.status) || (error.code === 'EACCES' ? 403 : 500), { ok: false, error: error.code === 'EACCES' ? 'The Home Videos folder is not writable by PRISM Server.' : (error.status ? error.message : 'Artwork could not be saved.') }, origin);

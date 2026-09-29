@@ -17,7 +17,6 @@
     "package:windows": "npm run native:build && npm run vlc:prepare && npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
     "hls.js": "^1.6.13",
     "react": "latest",
     "react-dom": "latest"
@@ -28,9 +27,10 @@
     "@types/node": "^26.1.2",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "cross-env": "latest",
-    "electron": "43.2.0",
+    "electron": "43.7.6",
     "electron-builder": "latest",
     "jsdom": "latest",
     "typescript": "latest",
@@ -46,7 +46,8 @@
     },
     "files": [
       "dist/**/*",
-      "electron/**/*",
+      "electron/*.cjs",
+      "electron/native/build/Release/*.node",
       "package.json"
     ],
     "asarUnpack": [

@@ -43,6 +43,7 @@ function releaseScore(release: MusicBrainzRelease, album: MediaItem) {
 
 async function coverArtFor(releaseId: string) {
   const response = await fetch(`https://coverartarchive.org/release/${encodeURIComponent(releaseId)}`, {
+    signal: AbortSignal.timeout(10000),
     headers: { Accept: 'application/json' }
   });
   if (response.status === 404) return undefined;
@@ -76,6 +77,7 @@ async function lookupAlbum(album: MediaItem): Promise<AlbumMetadata | null> {
   if (album.year) terms.push(`date:${album.year}`);
   const params = new URLSearchParams({ query: terms.join(' AND '), fmt: 'json', limit: '12' });
   const response = await fetch(`https://musicbrainz.org/ws/2/release/?${params}`, {
+    signal: AbortSignal.timeout(10000),
     headers: { Accept: 'application/json' }
   });
   if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}.`);
@@ -88,7 +90,7 @@ async function lookupAlbum(album: MediaItem): Promise<AlbumMetadata | null> {
   const artworkCandidates = candidates.slice(0, 6);
   const artwork = await Promise.all(artworkCandidates.map(async (release) => ({
     release,
-    backCoverUrl: await coverArtFor(release.id)
+    backCoverUrl: await coverArtFor(release.id).catch(() => undefined)
   })));
   const withBack = artwork.find((candidate) => candidate.backCoverUrl);
   const selected = withBack ?? { release: candidates[0], backCoverUrl: undefined };

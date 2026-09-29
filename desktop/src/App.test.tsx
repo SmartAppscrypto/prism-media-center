@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
@@ -138,4 +138,104 @@ describe('Prism shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move Shows up' }));
     await waitFor(() => expect(JSON.parse(localStorage.getItem('prism-preferences') ?? '{}').libraryOrder.slice(0, 2)).toEqual(['shows', 'movies']));
   });
+});
+
+describe('audit regressions', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  const session = { serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'viewer' };
+  const response = (Items: unknown[]) => ({ ok: true, json: async () => ({ Items }) });
+  const views = [{ Id: 'movies', Name: 'Movies', CollectionType: 'movies' }, { Id: 'shows', Name: 'Shows', CollectionType: 'tvshows' }];
+
+  it('recovers from invalid saved preference types and values', () => {
+    localStorage.setItem('prism-preferences', JSON.stringify({ libraryOrder: null, hiddenLibraryIds: 42, defaultSort: 'bogus', skipSeconds: -100, reducedMotion: 'false' }));
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'EXPLORE THE DEMO' }));
+    expect(screen.getByRole('combobox', { name: 'Sort library' })).toHaveValue('alphabetical');
+    expect(JSON.parse(localStorage.getItem('prism-preferences')!).skipSeconds).toBe(10);
+    expect(screen.getByRole('main')).not.toHaveClass('library--reduced-motion');
+  });
+
+  it('shows an empty library after loading, and keeps the closed drawer inert', async () => {
+    localStorage.setItem('prism-session', JSON.stringify(session));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => response(url.includes('/Views') ? views : [])));
+    const { container } = render(<App />);
+    expect(await screen.findByText(/No titles yet/)).toBeInTheDocument();
+    expect(container.querySelector('.library-drawer')).toHaveAttribute('inert');
+    fireEvent.click(screen.getByRole('button', { name: 'Open library menu' }));
+    expect(container.querySelector('.library-drawer')).not.toHaveAttribute('inert');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('.library-drawer')).toHaveAttribute('inert');
+  });
+
+  it('ignores late responses after switching libraries quickly', async () => {
+    localStorage.setItem('prism-session', JSON.stringify(session));
+    let resolveShows!: (value: ReturnType<typeof response>) => void;
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/Views')) return Promise.resolve(response(views));
+      if (url.includes('ParentId=shows')) return new Promise(resolve => { resolveShows = resolve; });
+      return Promise.resolve(response([{ Id: 'movie', Name: 'Correct movie', Type: 'Movie' }]));
+    }));
+    render(<App />);
+    await screen.findByRole('button', { name: 'Open Correct movie' });
+    screen.getByRole('region', { name: 'Media library' }).scrollTo = vi.fn();
+    fireEvent.click(screen.getByRole('button', { name: 'Open library menu' }));
+    fireEvent.click(screen.getByRole('button', { name: /Shows/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open library menu' }));
+    fireEvent.click(screen.getByRole('button', { name: /Movies/ }));
+    await screen.findByRole('button', { name: 'Open Correct movie' });
+    await act(async () => { resolveShows(response([{ Id: 'show', Name: 'Stale show', Type: 'Series' }])); });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Open Stale show' })).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Open Correct movie' })).toBeInTheDocument();
+  });
+
+  it('sorts full dates and year-only releases on the same timeline', async () => {
+    localStorage.setItem('prism-session', JSON.stringify(session));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => response(url.includes('/Views') ? views : [
+      { Id: 'old', Name: 'Old', Type: 'Movie', ProductionYear: 1990 },
+      { Id: 'new', Name: 'New', Type: 'Movie', PremiereDate: '2026-01-01T00:00:00Z' }
+    ])));
+    render(<App />);
+    await screen.findByRole('button', { name: 'Open Old' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sort library' }), { target: { value: 'released' } });
+    expect(within(screen.getByRole('region', { name: 'Media library' })).getAllByRole('button')[0]).toHaveAccessibleName('Open New');
+  });
+
+  it('does not start lyric requests when a pending scan returns after sign-out', async () => {
+    localStorage.setItem('prism-session', JSON.stringify(session));
+    let resolveTracks!: (value: ReturnType<typeof response>) => void;
+    const fetcher = vi.fn((url: string) => {
+      if (url.includes('IncludeItemTypes=Audio&')) return new Promise(resolve => { resolveTracks = resolve; });
+      return Promise.resolve(response(url.includes('/Views') ? views : []));
+    });
+    vi.stubGlobal('fetch', fetcher);
+    render(<App />);
+    await screen.findByText(/No titles yet/);
+    fireEvent.click(screen.getByRole('button', { name: 'Open library menu' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'FETCH MISSING' }));
+    await waitFor(() => expect(resolveTracks).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: 'Back to libraries' }));
+    fireEvent.click(screen.getByRole('button', { name: 'SIGN OUT' }));
+    const count = fetcher.mock.calls.length;
+    await act(async () => { resolveTracks(response([{ Id: 'track', Name: 'Private song', Type: 'Audio', Artists: ['Artist'] }])); });
+    expect(fetcher).toHaveBeenCalledTimes(count);
+    expect(screen.getByRole('button', { name: 'ENTER PRISM' })).toBeInTheDocument();
+    expect(screen.queryByText(/COMPLETE/)).not.toBeInTheDocument();
+  });
+});
+
+it('shows title artwork when a server poster fails to load', async () => {
+  localStorage.clear();
+  localStorage.setItem('prism-session', JSON.stringify({ serverUrl: 'http://server', accessToken: 'token', userId: 'user', username: 'viewer' }));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => ({ Items: url.includes('/Views')
+    ? [{ Id: 'movies', Name: 'Movies', CollectionType: 'movies' }]
+    : [{ Id: 'test', Name: 'Missing poster', Type: 'Movie' }] }) })));
+  try {
+    render(<App />);
+    const poster = await screen.findByRole('button', { name: 'Open Missing poster' });
+    fireEvent.error(poster.querySelector('img')!);
+    expect(poster).toHaveTextContent('Missing poster');
+    expect(poster.querySelector('img')).toBeNull();
+  } finally { cleanup(); vi.unstubAllGlobals(); }
 });
