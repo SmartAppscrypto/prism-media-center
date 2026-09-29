@@ -32,6 +32,7 @@ const productionFacetFields = new Set([
 ]);
 let productionCache;
 let productionScanRunning = false;
+let productionScanGeneration = 0;
 let nativePlayer;
 
 function nativePlayerPaths() {
@@ -138,6 +139,7 @@ handle('prism-session-save', async (_event, value) => {
   return true;
 });
 handle('prism-session-clear', async () => {
+  ++productionScanGeneration;
   memorySession = null;
   sessionWrites = sessionWrites.catch(() => undefined).then(() => fs.rm(prismDataPath('prism-session.json'), { force: true }));
   await sessionWrites;
@@ -222,13 +224,17 @@ handle('prism-production-scan', async (event, rawItems) => {
     .filter((item) => productionKey(item))
     .slice(0, 5000) : [];
   productionScanRunning = true;
+  const generation = ++productionScanGeneration;
+  const cancelled = () => generation !== productionScanGeneration || event.sender.isDestroyed();
   let found = 0;
   let missing = 0;
   let skipped = 0;
   try {
     for (let index = 0; index < items.length; index += 1) {
+      if (cancelled()) return { ok: false, error: 'Scan cancelled.' };
       const item = items[index];
       const cache = await getProductionCache();
+      if (cancelled()) return { ok: false, error: 'Scan cancelled.' };
       const cached = cache[productionKey(item)];
       if (cached?.data || (cached && Date.now() - cached.checkedAt < productionMissMaxAge)) {
         skipped += 1;
@@ -237,6 +243,7 @@ handle('prism-production-scan', async (event, rawItems) => {
         if (data) found += 1;
         else missing += 1;
       }
+      if (cancelled()) return { ok: false, error: 'Scan cancelled.' };
       event.sender.send('prism-production-progress', {
         current: index + 1,
         total: items.length,

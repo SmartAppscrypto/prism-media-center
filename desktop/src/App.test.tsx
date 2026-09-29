@@ -200,6 +200,29 @@ describe('audit regressions', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Sort library' }), { target: { value: 'released' } });
     expect(within(screen.getByRole('region', { name: 'Media library' })).getAllByRole('button')[0]).toHaveAccessibleName('Open New');
   });
+
+  it('does not start lyric requests when a pending scan returns after sign-out', async () => {
+    localStorage.setItem('prism-session', JSON.stringify(session));
+    let resolveTracks!: (value: ReturnType<typeof response>) => void;
+    const fetcher = vi.fn((url: string) => {
+      if (url.includes('IncludeItemTypes=Audio&')) return new Promise(resolve => { resolveTracks = resolve; });
+      return Promise.resolve(response(url.includes('/Views') ? views : []));
+    });
+    vi.stubGlobal('fetch', fetcher);
+    render(<App />);
+    await screen.findByText(/No titles yet/);
+    fireEvent.click(screen.getByRole('button', { name: 'Open library menu' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'FETCH MISSING' }));
+    await waitFor(() => expect(resolveTracks).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: 'Back to libraries' }));
+    fireEvent.click(screen.getByRole('button', { name: 'SIGN OUT' }));
+    const count = fetcher.mock.calls.length;
+    await act(async () => { resolveTracks(response([{ Id: 'track', Name: 'Private song', Type: 'Audio', Artists: ['Artist'] }])); });
+    expect(fetcher).toHaveBeenCalledTimes(count);
+    expect(screen.getByRole('button', { name: 'ENTER PRISM' })).toBeInTheDocument();
+    expect(screen.queryByText(/COMPLETE/)).not.toBeInTheDocument();
+  });
 });
 
 it('shows title artwork when a server poster fails to load', async () => {

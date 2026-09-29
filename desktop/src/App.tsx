@@ -1634,6 +1634,11 @@ export default function App() {
   const wallRef = useRef<HTMLElement>(null);
   const scrollbarTimerRef = useRef<number | undefined>(undefined);
   const libraryRequestRef = useRef(0);
+  const scanSessionRef = useRef(session);
+  useEffect(() => {
+    scanSessionRef.current = session;
+    return () => { scanSessionRef.current = null; };
+  }, [session]);
 
   useEffect(() => {
     try { localStorage.setItem(preferencesKey, JSON.stringify(preferences)); } catch { /* Storage may be unavailable or full. */ }
@@ -1660,7 +1665,12 @@ export default function App() {
     void window.prismMetadata?.hasTmdbToken().then(setTmdbConfigured);
   }, [drawerPage, menuOpen]);
 
-  useEffect(() => window.prismMetadata?.onProductionProgress(setProductionScan), []);
+  useEffect(() => {
+    if (!productionScanRunning || !session) return;
+    return window.prismMetadata?.onProductionProgress((progress) => {
+      if (scanSessionRef.current === session) setProductionScan(progress);
+    });
+  }, [productionScanRunning, session]);
 
   useEffect(() => {
     setAlbumMetadata(null);
@@ -1759,22 +1769,25 @@ export default function App() {
       setProductionScanStatus('Scanning is available in the installed app while connected to your server.');
       return;
     }
+    const isCurrent = () => scanSessionRef.current === session;
     setProductionScanRunning(true);
     setProductionScan(null);
     setProductionScanStatus('PREPARING MOVIE LIBRARY…');
     try {
       const movieView = views.find((view) => view.collectionType === 'movies' || view.name.toLowerCase() === 'movies');
       const movies = activeView?.id === movieView?.id ? items : await getLibrary(session, movieView);
+      if (!isCurrent()) return;
       const targets = movies.filter((item) => item.type === 'Movie' && item.year).map((item) => ({ title: item.title, year: item.year }));
       setProductionScanStatus('SCANNING MISSING TITLES…');
       const result = await window.prismMetadata.scanProduction(targets);
+      if (!isCurrent()) return;
       setProductionScanStatus(result.ok
         ? `COMPLETE · ${result.found || 0} FOUND · ${result.skipped || 0} ALREADY CACHED · ${result.missing || 0} UNAVAILABLE`
         : result.error || 'The scan could not be completed.');
     } catch {
-      setProductionScanStatus('The movie library could not be prepared for scanning.');
+      if (isCurrent()) setProductionScanStatus('The movie library could not be prepared for scanning.');
     } finally {
-      setProductionScanRunning(false);
+      if (isCurrent()) setProductionScanRunning(false);
     }
   }
 
@@ -1783,6 +1796,7 @@ export default function App() {
       setLyricsScanStatus('Connect to PRISM Server before gathering lyrics.');
       return;
     }
+    const isCurrent = () => scanSessionRef.current === session;
     setLyricsScanRunning(true);
     setLyricsScan(null);
     setLyricsScanStatus('PREPARING MUSIC LIBRARY…');
@@ -1791,6 +1805,7 @@ export default function App() {
       let found = 0;
       let missing = 0;
       for (let index = 0; index < tracks.length; index += 1) {
+        if (!isCurrent()) return;
         const track = tracks[index];
         setLyricsScan({ current: index + 1, total: tracks.length, found, missing, title: track.title });
         try {
@@ -1800,14 +1815,15 @@ export default function App() {
         } catch {
           missing += 1;
         }
+        if (!isCurrent()) return;
         setLyricsScan({ current: index + 1, total: tracks.length, found, missing, title: track.title });
         await new Promise((resolve) => window.setTimeout(resolve, 90));
       }
-      setLyricsScanStatus(`COMPLETE · ${found} FOUND · ${missing} UNAVAILABLE`);
+      if (isCurrent()) setLyricsScanStatus(`COMPLETE · ${found} FOUND · ${missing} UNAVAILABLE`);
     } catch {
-      setLyricsScanStatus('The music library could not be prepared for lyric matching.');
+      if (isCurrent()) setLyricsScanStatus('The music library could not be prepared for lyric matching.');
     } finally {
-      setLyricsScanRunning(false);
+      if (isCurrent()) setLyricsScanRunning(false);
     }
   }
 
@@ -1988,6 +2004,13 @@ export default function App() {
   }
 
   function disconnect() {
+    scanSessionRef.current = null;
+    setProductionScanRunning(false);
+    setProductionScan(null);
+    setProductionScanStatus('');
+    setLyricsScanRunning(false);
+    setLyricsScan(null);
+    setLyricsScanStatus('');
     ++libraryRequestRef.current;
     void window.prismSession?.clear().catch(() => undefined);
     localStorage.removeItem(sessionKey);
@@ -2136,7 +2159,7 @@ export default function App() {
                     </div>
                   )}
                   {lyricsScanStatus && <p className="production-scan-status" role="status">{lyricsScanStatus}</p>}
-                  <p className="settings-hint">Checks PRISM Server first, then privately caches missing synchronized lyrics on this Mac. Instrumental tracks are recognized automatically.</p>
+                  <p className="settings-hint">Checks PRISM Server first, then privately caches missing synchronized lyrics on this computer. Instrumental tracks are recognized automatically.</p>
                 </section>
 
                 <section className="settings-section">
@@ -2153,7 +2176,7 @@ export default function App() {
                     </div>
                   )}
                   {tmdbStatus && <p className="metadata-status" role="status">{tmdbStatus}</p>}
-                  <p className="settings-hint">Adds reported budget and revenue. Your token is encrypted in macOS secure storage.</p>
+                  <p className="settings-hint">Adds reported budget and revenue. Your token is encrypted in your computer's secure storage.</p>
                   <p className="tmdb-attribution">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
                   <div className="production-scan-control">
                     <div><strong>Production formats</strong><span>Camera, lenses, film stock and process</span></div>
