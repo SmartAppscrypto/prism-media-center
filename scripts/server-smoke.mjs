@@ -6,8 +6,6 @@ const values = new Map();
 globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k,v) => values.set(k,v) };
 const base = 'http://127.0.0.1:8096';
 const password = randomUUID();
-const info = await (await fetch(base + '/System/Info/Public')).json();
-assert.equal(info.startupWizardCompleted ?? info.StartupWizardCompleted, false);
 // Public info becomes available before database startup completes.
 let ready = false;
 for (let attempt = 0; attempt < 90; attempt += 1) {
@@ -17,6 +15,10 @@ for (let attempt = 0; attempt < 90; attempt += 1) {
   await new Promise(resolve => setTimeout(resolve, 2000));
 }
 assert.ok(ready, 'Server did not finish initial database startup');
+const infoResponse = await fetch(base + '/System/Info/Public');
+assert.ok(infoResponse.ok, `Info: ${infoResponse.status}`);
+const info = await infoResponse.json();
+assert.equal(info.startupWizardCompleted ?? info.StartupWizardCompleted, false);
 for (const [route, body] of [['User', { Name: 'prism-ci-viewer', Password: password }], ['Complete', null]]) {
   const response = await fetch(base + '/Startup/' + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
   assert.ok(response.ok, `Setup ${route}: ${response.status}`);

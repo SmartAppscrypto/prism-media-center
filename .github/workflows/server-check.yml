@@ -1,0 +1,32 @@
+name: Server integration
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  server-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Start a clean independent server
+        working-directory: server
+        run: |
+          mkdir -p config cache media/Movies
+          docker compose config --quiet
+          docker compose up -d jellyfin
+          for attempt in $(seq 1 90); do
+            if curl --fail http://127.0.0.1:8096/System/Info/Public -o /tmp/server-info.json; then
+              node --experimental-strip-types ../scripts/server-smoke.mjs
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+      - if: always()
+        working-directory: server
+        run: docker compose down
