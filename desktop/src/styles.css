@@ -494,7 +494,7 @@ html:has(.player--native), body:has(.player--native), #root:has(.player--native)
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
 /* Keep the playback title area draggable above both video surfaces. */
-.player__drag-region { z-index: 50; cursor: move; }
+.player__drag-region { z-index: 50; cursor: move; app-region: no-drag; -webkit-app-region: no-drag; }
 .gallery-action { flex-shrink: 0; border: 1px solid rgb(255 255 255 / .24); padding: 8px 10px; background: rgb(0 0 0 / .4); color: #fff; cursor: pointer; font: .65rem 'Space Mono'; }
 .gallery-action:focus-visible { outline: 2px solid #a9f5ff; outline-offset: 3px; }
 

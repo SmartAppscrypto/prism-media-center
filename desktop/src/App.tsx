@@ -101,6 +101,7 @@ function windowDragProps() {
   return {
     onPointerDown(event: ReactPointerEvent<HTMLElement>) {
       if (event.button !== 0 || (event.target as HTMLElement).closest('button, input, select, a')) return;
+      if (!window.prismWindow) return;
       event.currentTarget.setPointerCapture(event.pointerId);
       window.prismWindow?.startDrag(event.screenX, event.screenY);
     },
@@ -1717,7 +1718,7 @@ export default function App() {
     Promise.all([getItemDetails(selected, session), getSimilarItems(selected, session)]).then(async ([details, similar]) => {
       if (cancelled) return;
       const [financials, production] = await Promise.all([
-        window.prismMetadata?.getTmdbMovie({ tmdbId: details.tmdbId, imdbId: details.imdbId }),
+        selected.type === 'Movie' ? window.prismMetadata?.getTmdbMovie({ tmdbId: details.tmdbId, imdbId: details.imdbId }) : undefined,
         window.prismMetadata?.getProduction({ title: selected.title, year: selected.year, scrapeIfMissing: true })
       ]);
       if (cancelled) return;
@@ -2004,8 +2005,8 @@ export default function App() {
   async function saveHomeVideoArtwork(kind: ArtworkKind, dataUrl: string) {
     if (!selected || !session) throw new Error('Reconnect to PRISM Server before saving artwork.');
     const result = await uploadHomeVideoArtwork(selected, session, kind, dataUrl);
-    const imageUrl = `${session.serverUrl}/Items/${selected.id}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
-    const backdropUrl = `${session.serverUrl}/Items/${selected.id}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
+    const imageUrl = `${session.serverUrl}/Items/${encodeURIComponent(selected.id)}/Images/Primary?maxWidth=640&quality=90&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
+    const backdropUrl = `${session.serverUrl}/Items/${encodeURIComponent(selected.id)}/Images/Backdrop/0?maxWidth=1920&quality=88&api_key=${encodeURIComponent(session.accessToken)}&v=${result.updatedAt}`;
     const patch = kind === 'poster' ? { imageUrl } : { backdropUrl };
     setItems((current) => current.map((item) => item.id === selected.id ? { ...item, ...patch } : item));
     setSelected((current) => current?.id === selected.id ? { ...current, ...patch } : current);

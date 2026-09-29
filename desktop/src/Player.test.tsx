@@ -35,6 +35,31 @@ const props = {
   preferences, onPreferencesChange: () => {}, onClose: () => {}
 };
 describe('player audit regressions', () => {
+  it('moves the window through the player drag region and ends capture on release', () => {
+    const startDrag = vi.fn();
+    const moveDrag = vi.fn();
+    const endDrag = vi.fn();
+    window.prismWindow = { platform: 'darwin', startDrag, moveDrag, endDrag } as unknown as Window['prismWindow'];
+    const { container } = render(<Player {...props} />);
+    const region = container.querySelector('.player__drag-region') as HTMLElement;
+    let captured = false;
+    region.setPointerCapture = () => { captured = true; };
+    region.hasPointerCapture = () => captured;
+    region.releasePointerCapture = () => { captured = false; };
+    const pointer = (type: string, screenX: number, screenY: number) => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, screenX, screenY });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      fireEvent(region, event);
+    };
+    pointer('pointerdown', 400, 200);
+    pointer('pointermove', 500, 260);
+    pointer('pointerup', 500, 260);
+    pointer('pointermove', 700, 400);
+    expect(startDrag).toHaveBeenCalledWith(400, 200);
+    expect(moveDrag).toHaveBeenCalledExactlyOnceWith(500, 260);
+    expect(endDrag).toHaveBeenCalledOnce();
+    expect(captured).toBe(false);
+  });
   it('keeps slider arrows and button activation separate from global shortcuts', () => {
     const toggleFullscreen = vi.fn();
     window.prismWindow = { platform: 'darwin', toggleFullscreen } as unknown as Window['prismWindow'];
