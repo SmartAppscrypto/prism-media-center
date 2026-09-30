@@ -53,3 +53,7 @@ See [the release checklist](APP-STORE-CHECKLIST.md). Do not describe the app as 
 - Validation: 12 core tests passed on macOS. Two signed tvOS simulator integration tests passed, including nonzero decoded VLC video frames, pause/restart, and actual Keychain write/read/delete. Physical-device signed build and install succeeded.
 - Physical Apple TV NAS playback, library focus navigation and session restoration after relaunch still require user verification. Launch was blocked by the sleeping TV; installation itself succeeded. Do not treat simulator success as confirmation that the NAS movie is fixed.
 - This remains a native client under development, not full feature parity with Electron PRISM. Playback-history synchronization, downloads, music queues, editing artwork and the full desktop presentation remain release gaps. No App Store submission has been made.
+
+### Physical-device launch packaging correction
+
+The first VLC device install crashed before showing UI: dyld could not load `@rpath/TVVLCKit.framework/TVVLCKit`. The simulator test runner's framework search paths masked a missing framework in the app bundle. TVVLCKit is dynamic and must be embedded and signed, not only linked. The XcodeGen dependency now does both. The rebuilt physical-device bundle passed `codesign --verify --deep --strict`, contained the framework, and launched on the Apple TV without that dyld error. `verify-tv-bundle.sh` now gates the TV CI build against this omission. NAS playback remains a separate verification step.

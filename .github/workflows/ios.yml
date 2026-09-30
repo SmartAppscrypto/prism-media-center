@@ -48,6 +48,9 @@ jobs:
           CODE_SIGNING_ALLOWED=NO
           SWIFT_ACTIVE_COMPILATION_CONDITIONS='${{ matrix.flags }}'
           build
+      - name: Verify TV runtime framework packaging
+        if: matrix.scheme == 'PrismTV'
+        run: bash ios/scripts/verify-tv-bundle.sh ios/.build/PrismTV/Build/Products/Release-appletvsimulator/PrismTV.app
       - name: Test layout and address boundaries
         if: matrix.scheme == 'PrismMac'
         working-directory: ios

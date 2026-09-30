@@ -38,7 +38,8 @@ targets:
     sources: [Prism]
     dependencies:
       - framework: Vendor/TVVLCKit-binary/TVVLCKit.xcframework
-        embed: false
+        embed: true
+        codeSign: true
       - sdk: CoreText.framework
       - sdk: AVFoundation.framework
       - sdk: AudioToolbox.framework
