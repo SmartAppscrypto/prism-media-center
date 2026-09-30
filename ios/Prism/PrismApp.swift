@@ -297,15 +297,17 @@ struct PrismRoot: View {
             if pane == 0 {
                 ScrollViewReader { scroll in
                     List {
-                        Color.clear.frame(height: 1).id("library-top").accessibilityHidden(true)
                         if model.items.isEmpty && !model.busy { Text("No movies or shows found. Add media in your server settings, then refresh.") }
                         ForEach(model.items) { item in
                             Button { model.select(item); pane = 1 } label: {
                                 VStack(alignment: .leading) { Text(item.Name); Text(item.Type ?? "Video").font(.caption).foregroundStyle(.secondary) }
-                            }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }.buttonStyle(.plain).id(item.id)
+                                .accessibilityLabel("\(item.Name), \(item.Type ?? "Video")")
                         }
                     }
-                    .onChange(of: scrollRequest) { _, _ in withAnimation { scroll.scrollTo("library-top", anchor: .top) } }
+                    .onChange(of: scrollRequest) { _, _ in if let first = model.items.first { withAnimation { scroll.scrollTo(first.id, anchor: .top) } } }
                     .overlay { if model.busy { ProgressView() } }
                 }
             } else { details }
@@ -321,9 +323,9 @@ struct PrismRoot: View {
                         ForEach(model.episodes) { episode in Button("Play \(episode.Name)") { model.play(episode) } }
                     } else { Button("Play") { model.play(item) }.buttonStyle(.borderedProminent) }
                     Text(item.Overview ?? "No overview is available.")
+                    if item.Type == "Movie" && !model.isDemo {
                     LabeledContent("Budget", value: money(model.finances?.budget))
                     LabeledContent("Box office", value: money(model.finances?.revenue))
-                    if !model.isDemo {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Optional TMDb details").font(.headline)
                         SecureField("Your TMDb read access token", text: $model.tmdbToken).accountInput()

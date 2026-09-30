@@ -55,6 +55,8 @@ struct MacVideoPlayer: NSViewRepresentable {
         view.player = player
         view.controlsStyle = .floating
         view.showsFullScreenToggleButton = true
+        // Authenticated stream URLs must never be offered to sharing services.
+        view.showsSharingServiceButton = false
         return view
     }
     func updateNSView(_ view: AVPlayerView, context: Context) {
