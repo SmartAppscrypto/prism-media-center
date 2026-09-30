@@ -1,38 +1,41 @@
-# PRISM native iOS / iPhone Duo development preview
+# PRISM native Apple client
 
-This is a separate SwiftUI/AVKit client, not an Electron wrapper or part of the desktop installers. It requires Xcode 27.1 with the iOS 27.1 SDK and XcodeGen. It has not been validated on a physical Duo. No signed IPA or App Store release is provided.
+Native SwiftUI clients, with TVVLCKit on Apple TV and AVKit on other targets. Client targets for iPhone/iPad (`Prism`), Apple TV (`PrismTV`) and sandboxed Mac (`PrismMac`). These are under preparation and are **not on the App Store**. They connect to each user's own Jellyfin server; no publisher server or credential is included.
 
-Generate with `xcodegen generate` from `ios`, then open `Prism.xcodeproj`. Select your own signing team and bundle ID to run on your devices. Build for an iPhone Duo simulator first. `xcodebuild -project Prism.xcodeproj -scheme Prism -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build` performs an unsigned simulator build.
+See the [App Store checklist](../docs/apple/APP-STORE-CHECKLIST.md), [listing draft](../docs/apple/STORE-LISTING.md) and [privacy policy](../docs/apple/PRIVACY.md).
 
-The client connects to the user's Jellyfin server, browses movies/series/episodes, plays AVPlayer-compatible direct streams, and optionally loads financial details using the user's own TMDb token. Session/password/TMDb credentials are not persisted. HTTPS is required for remote servers; local-network access is requested by iOS. Transcoding negotiation, secure persistent login, rich posters and App Store packaging remain follow-up work before production distribution.
+## Build
 
-## Layout behavior
+Install full Xcode and XcodeGen, then run:
 
-| Configuration | Automatic behavior |
-| --- | --- |
-| Open flat, playing | One full-window player |
-| Open flat, idle | Full-window library |
-| Tabletop with horizontal division | Video above fold; browse/details below |
-| Partially folded like a book | Video beside fold; browse/details in other region |
-| Closed / outer display | Same scene and player adapt to the new geometry |
-| Split view with another app | Available scene bounds define the app size; narrow windows use a single pane |
-| Manual Top / bottom | Equal stacked panes without requiring fold hardware |
-| Manual Side by side | Equal columns in wide windows; one pane when narrower than 600 points |
-| Eye toggled | Secondary pane becomes black; player stays in its safe pane |
-| Manual Full screen | One player across the current app window; system multitasking bounds still apply |
+```sh
+cd ios
+bash scripts/bootstrap-vlc.sh
+xcodegen generate
+xcodebuild -project Prism.xcodeproj -scheme Prism -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project Prism.xcodeproj -scheme PrismTV -sdk appletvsimulator CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project Prism.xcodeproj -scheme PrismMac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+```
 
-Playback ownership stays in LibraryModel while views resize. The system selects the active display; the app does not force an inactive outer display on or use camera-only accessory APIs. The eye control hides app content, not the physical display/backlight. A single OLED panel is not two independently switchable screens.
+Select Xcode 27.1 beta and pass `SWIFT_ACTIVE_COMPILATION_CONDITIONS=PRISM_DUO_SDK` for Duo geometry validation. iOS 17 remains the minimum OS, with availability checks around the iOS 27.1 APIs. Standard 27.0 builds omit those APIs. Apple's current beta acceptance is for TestFlight; verify release eligibility separately.
 
-## Verification required before shipping
+`PrismMac` uses only outgoing-network sandbox permission. Signing requires the publisher's own Apple Developer team; see `scripts/archive.sh`. No signing credentials belong in this repository.
 
-Use Device Hub's Duo poses, rotate each pose and test transitions during playback and pause: flat -> tabletop -> book -> closed -> reopened. Confirm playhead continuity, controls clear of the division/camera regions, focus and VoiceOver labels, Dynamic Type, safe areas, split-view resizing, eye hide/restore, episode switching, network loss, and app background/foreground. Confirm server compatibility and unsupported-codec errors. Validate manual modes separately from Automatic.
+## Included behavior
 
-Apple's implementation sources:
-- [Adaptive layouts and reserved regions](https://developer.apple.com/videos/play/tech-talks/111463/): the implementation queries GeometryProxy.reservedRegions(kind: .division), not hinge-angle thresholds.
-- [Preparing apps and screen transitions](https://developer.apple.com/videos/play/tech-talks/111461/): use current scene geometry and preserve app state as displays change.
-- [Scenes and displays](https://developer.apple.com/videos/play/tech-talks/111464/): system-managed display/accessory availability; outer camera accessory is not a general movie-display API.
-- [Design guidance](https://developer.apple.com/design/human-interface-guidelines/designing-for-iphone-duo).
+- Keychain-backed session restoration; no default server address or stored password. Sign-out removes the saved session.
+- Actual Jellyfin library sections, matching desktop `getViews`/`getLibrary`: movies, shows, home videos and music albums; episodes and album tracks, details, refresh/shuffle and return-to-top.
+- Apple TV: native VLC direct-source playback, full-screen video, auto-hiding controls, seek and runtime remaining. Other platforms: AVFoundation playback and a Mac fullscreen button.
+- Apple TV remote Play/Pause and Back to library/top.
+- One player instance per window, independent of layout changes. Duo builds avoid active division regions, offer a hidden lower pane and retain full-window behavior when no division is active.
+- Offline original geometric playback sample and in-app setup/privacy help.
 
-## Build attempt on 29 September 2026
+Apple TV links the official stable TVVLCKit 3.7.3 binary from VideoLAN, verified against the SHA-256 in its CocoaPods spec. It plays original streams without requiring NAS transcoding. Other targets use AVFoundation-compatible streams. Downloads, playback-history sync and a Watch app are not included. Existing Electron/libVLC builds have a different feature set. No claim of complete device validation is made by a successful compiler run.
 
-The GitHub `xcode-27` runner currently supplies Xcode 27.0, not the required 27.1 SDK. The explicit SDK gate failed before native compilation. Swift syntax parsing passed locally, but this is not a simulator build. Install/select Xcode 27.1 and rerun the Native iOS SDK validation workflow before claiming compatibility.
+The original 30-second silent `Resources/PrismSample.mp4` was generated from geometric primitives with FFmpeg; it contains no third-party footage or soundtrack. TV branding reproduces the existing PRISM wordmark; regenerate with `swift scripts/generate-tv-assets.swift Prism/Assets.xcassets/TVBrand.brandassets`.
+
+## VLC dependency and reproducible builds
+
+`bootstrap-vlc.sh` downloads the official TVVLCKit 3.7.3 release (VLCKit `319ed2c0`, libVLC `79128878`) and checks its published SHA-256. `Vendor/` is intentionally ignored. The LGPL notice is bundled in Resources/Licenses. Upstream source and build scripts: https://code.videolan.org/videolan/VLCKit. Keep the license and source/build information with distributed binaries; App Store packaging remains a separate release gate.
+
+Personal installs: regenerate the project, select your Personal Team for PrismTV, choose your paired TV, and run. Do not commit a personal Team ID. A rebuild retains the Keychain session for the same signing identity and bundle identifier. This does not remove Apple's provisioning expiry.

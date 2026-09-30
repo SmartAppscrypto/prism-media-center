@@ -15,6 +15,6 @@ For subsequent source changes, see the [application audit](AUDIT-2026-09-29.md).
 - Five-page guide: rendered and visually inspected.
 - History scan: common credential patterns checked across the 34 pre-existing commits; no matches. Pattern scanning is not a complete secret audit.
 
-Hardware limitations: no physical Windows installation/playback test, no Intel Mac playback test, no iPhone Duo device/simulator test. iOS compilation is blocked because the available Xcode runner has SDK 27.0 rather than required 27.1. Local Swift syntax parsing is not a substitute for a native SDK build. Desktop signing/notarization is not configured; downloads are unsigned previews.
+Hardware limitations: no physical Windows installation/playback test, no Intel Mac playback test, no iPhone Duo device/simulator test. Update: Apple preparation now selects the installed Xcode 27.1 beta explicitly. Native iOS, Duo, tvOS and macOS SDK builds pass; see `apple/APP-STORE-CHECKLIST.md` for remaining device and signing gates. Compiler success does not replace device testing. Desktop signing/notarization is not configured; downloads are unsigned previews.
 
 The source-only integration test was corrected after the installer builds to wait through Jellyfin's initialization responses. Production desktop/server sources are unchanged between those verified installer builds and the final release source tag.

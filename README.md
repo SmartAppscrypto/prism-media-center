@@ -60,6 +60,12 @@ Direct play is the first playback path. PRISM intentionally asks the server to p
 
 ## Gallery and playback controls
 
-Click **PRISM** or **↑ TOP** to close title details and return to the top of the current gallery. Keyboard and directional remotes can press **Home**, or press **Up** from the first poster row to focus **↑ TOP**, then select it. **Down** from that control returns focus to the first poster. These are desktop directional controls; this repository does not yet ship a native Apple TV app.
+Click **PRISM** or **↑ TOP** to close title details and return to the top of the current gallery. Keyboard and directional remotes can press **Home**, or press **Up** from the first poster row to focus **↑ TOP**, then select it. **Down** from that control returns focus to the first poster. These are desktop directional controls. Native Apple targets, including Apple TV, are being prepared separately in [`ios/`](ios/README.md); they are not yet distributed through the App Store.
 
 Choose **Random** sorting to reveal **↻ REFRESH**, which reshuffles the current gallery. During video playback, the timer beside the scrubber shows remaining time. Drag the empty top area to the right of the Back button to move the desktop window while playback continues.
+
+## Apple App Store preparation
+
+Native iPhone/iPad, Apple TV and sandboxed Mac targets are in [`ios/`](ios/README.md). The Apple edition is free with no in-app purchases and includes an offline playback sample. It currently supports direct Apple-compatible video; it does not yet match all Electron/libVLC features. The dedicated Duo SDK build is for TestFlight validation pending Apple's release acceptance.
+
+See the [release checklist](docs/apple/APP-STORE-CHECKLIST.md) for enrollment, signing, testing and submission. **No App Store submission has been made.**

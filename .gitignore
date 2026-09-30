@@ -15,3 +15,5 @@ server/media/
 tmp/
 ios/.build/
 ios/Prism.xcodeproj/
+
+ios/Vendor/

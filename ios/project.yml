@@ -2,7 +2,21 @@ name: Prism
 options:
   bundleIdPrefix: media.prism
   deploymentTarget:
-    iOS: '27.1'
+    iOS: '17.0'
+    tvOS: '17.0'
+    macOS: '14.0'
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    MARKETING_VERSION: '1.0.0'
+    CURRENT_PROJECT_VERSION: '1'
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_FILE: Prism/Info.plist
+    INFOPLIST_KEY_CFBundleDisplayName: PRISM
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
 targets:
   Prism:
     type: application
@@ -11,13 +25,92 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: media.prism.ios
-        SWIFT_VERSION: '6.0'
         TARGETED_DEVICE_FAMILY: '1,2'
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_FILE: Prism/Info.plist
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to your own PRISM or Jellyfin server on your home network.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortraitUpsideDown
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortraitUpsideDown
+  PrismTV:
+    type: application
+    platform: tvOS
+    sources: [Prism]
+    dependencies:
+      - framework: Vendor/TVVLCKit-binary/TVVLCKit.xcframework
+        embed: true
+        codeSign: true
+      - sdk: CoreText.framework
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - sdk: OpenGLES.framework
+      - sdk: VideoToolbox.framework
+      - sdk: CoreMedia.framework
+      - sdk: libc++.tbd
+      - sdk: libxml2.tbd
+      - sdk: libz.tbd
+      - sdk: libbz2.tbd
+      - sdk: libiconv.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.tvos
+        ASSETCATALOG_COMPILER_APPICON_NAME: TVBrand
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+  PrismMac:
+    type: application
+    platform: macOS
+    sources: [Prism]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.macos
+        ASSETCATALOG_COMPILER_APPICON_NAME: MacAppIcon
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Prism/PrismMac.entitlements
+  PrismTVTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources: [PrismTVTests]
+    dependencies:
+      - target: PrismTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.tvtests
+        INFOPLIST_FILE: ''
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/PrismTV.app/PrismTV
+        BUNDLE_LOADER: $(TEST_HOST)
+  PrismTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources: [PrismTVUITests]
+    dependencies:
+      - target: PrismTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.tvuitests
+        INFOPLIST_FILE: ''
+  PrismCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Prism/Core, PrismTests]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.coretests
+        INFOPLIST_FILE: ''
+schemes:
+  Prism:
+    build:
+      targets:
+        Prism: all
+  PrismTV:
+    build:
+      targets:
+        PrismTV: all
+    test:
+      targets: [PrismTVTests, PrismTVUITests]
+  PrismMac:
+    build:
+      targets:
+        PrismMac: all
+    test:
+      targets: [PrismCoreTests]
