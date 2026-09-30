@@ -30,7 +30,7 @@ struct DTOKey: CodingKey {
 struct Media: Decodable, Identifiable, Hashable {
     let Id: String
     let Name: String
-    let Type: String?
+    let `Type`: String?
     let Overview: String?
     let ProductionYear: Int?
     let RunTimeTicks: Double?
@@ -51,6 +51,7 @@ final class LibraryModel {
     var server = ""
     var username = ""
     var password = ""
+    var isDemo = false
     var token = ""
     var userID = ""
     var items: [Media] = []
@@ -103,6 +104,7 @@ final class LibraryModel {
         } catch { if revision != sessionRevision { return }; self.error = "Could not sign in. Check your server address, network access and account. Use HTTPS for a remote server." }
     }
     func reload() async {
+        if isDemo { items.shuffle(); return }
         guard !token.isEmpty else { return }
         reloadRevision += 1
         let revision = reloadRevision
@@ -119,6 +121,7 @@ final class LibraryModel {
     }
     func select(_ item: Media) {
         selectionTask?.cancel(); selected = item; episodes = []; finances = nil
+        if isDemo { return }
         selectionTask = Task {
             do {
                 if item.Type == "Series" {
@@ -137,8 +140,18 @@ final class LibraryModel {
     }
     func play(_ item: Media) {
         do {
-            // AVPlayer direct play. Server transcoding negotiation is not part of this preview.
-            let url = try endpoint("Videos/\(try ServerAddress.id(item.id))/stream", query: [.init(name: "static", value: "true"), .init(name: "api_key", value: token)])
+            // Direct play is intentionally limited to formats supported by AVFoundation.
+            let url: URL
+            if isDemo {
+                guard let sample = Bundle.main.url(forResource: "PrismSample", withExtension: "mp4") else { throw URLError(.fileDoesNotExist) }
+                url = sample
+            } else {
+                url = try endpoint("Videos/\(try ServerAddress.id(item.id))/stream", query: [.init(name: "static", value: "true"), .init(name: "api_key", value: token)])
+            }
+            #if os(iOS) || os(tvOS)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
             player.replaceCurrentItem(with: AVPlayerItem(url: url))
             playing = item; seconds = 0; duration = 0; player.play()
             if observer == nil {
@@ -158,7 +171,13 @@ final class LibraryModel {
         player.pause(); player.replaceCurrentItem(with: nil); playing = nil; seconds = 0; duration = 0
         if let observer { player.removeTimeObserver(observer); self.observer = nil }
     }
+    func demo() {
+        signOut()
+        isDemo = true
+        items = [Media(Id: "prism-sample", Name: "PRISM Playback Sample", Type: "Video", Overview: "An original 30-second geometric sample bundled with PRISM. Try play, pause, seeking, layouts and full screen. No server or internet connection is used in the sample library.", ProductionYear: nil, RunTimeTicks: 300_000_000, ProviderIds: nil)]
+    }
     func signOut() {
+        isDemo = false
         sessionRevision += 1; reloadRevision += 1; busy = false; error = ""; episodes = []; finances = nil; password = ""
         stop(); selectionTask?.cancel(); token = ""; userID = ""; tmdbToken = ""; items = []; selected = nil
     }
@@ -176,6 +195,7 @@ struct PrismRoot: View {
     @State private var hideSecondary = false
     @State private var pane = 0
     @State private var scrollRequest = 0
+    @State private var showHelp = false
     @FocusState private var libraryTopFocused: Bool
     #if os(macOS)
     @State private var window: NSWindow?
@@ -183,7 +203,7 @@ struct PrismRoot: View {
 
     var body: some View {
         Group {
-            if model.token.isEmpty { login }
+            if model.token.isEmpty && !model.isDemo { login }
             else {
                 GeometryReader { proxy in
                     let layout = PlaybackLayout.resolve(size: proxy.size, fold: divisionFrame(proxy), mode: mode)
@@ -217,6 +237,7 @@ struct PrismRoot: View {
             returnToTop()
         }
         #endif
+        .sheet(isPresented: $showHelp) { HelpView() }
         .alert("PRISM", isPresented: Binding(get: { !model.error.isEmpty }, set: { if !$0 { model.error = "" } })) {
             Button("OK") { model.error = "" }
         } message: { Text(model.error) }
@@ -228,6 +249,8 @@ struct PrismRoot: View {
             TextField("Username", text: $model.username).accountInput()
             SecureField("Password", text: $model.password)
             Button(model.busy ? "Connecting…" : "Connect") { Task { await model.signIn() } }.disabled(model.busy)
+            Button("Try sample library") { model.demo() }.disabled(model.busy)
+            Button("Setup help & privacy") { showHelp = true }
             Text("Your sign-in stays in memory only. Sign in again after quitting. Use HTTPS outside a trusted home network.").font(.footnote)
         }
     }
@@ -262,8 +285,10 @@ struct PrismRoot: View {
                 Spacer()
                 if model.playing != nil { Button("Now playing") { if let item = model.playing { model.select(item); pane = 1 } } }
                 Button("Refresh") { Task { await model.reload(); model.items.shuffle() } }.disabled(model.busy)
-                Button("Sign out") { model.signOut() }
+                Button(model.isDemo ? "Exit sample" : "Sign out") { model.signOut(); pane = 0 }
             }.padding(.horizontal)
+            if model.isDemo { Text("Sample library • Offline").font(.caption).foregroundStyle(.secondary) }
+            Button("Help & privacy") { showHelp = true }.font(.caption)
             Picker("Browse", selection: $pane) { Text("Library").tag(0); Text("Details").tag(1) }.pickerStyle(.segmented).padding(.horizontal)
             if pane == 0 {
                 ScrollViewReader { scroll in
@@ -294,10 +319,13 @@ struct PrismRoot: View {
                     Text(item.Overview ?? "No overview is available.")
                     LabeledContent("Budget", value: money(model.finances?.budget))
                     LabeledContent("Box office", value: money(model.finances?.revenue))
-                    DisclosureGroup("Optional TMDb details") {
+                    if !model.isDemo {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Optional TMDb details").font(.headline)
                         SecureField("Your TMDb read access token", text: $model.tmdbToken).accountInput()
                         Button("Load financial details") { model.select(item) }
                         Text("Uses your own token. Data provided by TMDb; unavailable values are not treated as zero.").font(.caption)
+                    }
                     }
                 }.padding()
             } else { Text("Choose a title from Library.").padding() }

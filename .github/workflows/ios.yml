@@ -51,3 +51,12 @@ jobs:
         if: matrix.scheme == 'PrismMac'
         working-directory: ios
         run: xcodebuild -project Prism.xcodeproj -scheme PrismMac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+      - name: Package unsigned validation app
+        if: matrix.scheme == 'PrismMac'
+        run: ditto -c -k --keepParent ios/.build/PrismMac/Build/Products/Release/PrismMac.app PrismMac-validation.zip
+      - uses: actions/upload-artifact@v4
+        if: matrix.scheme == 'PrismMac'
+        with:
+          name: PrismMac-validation
+          path: PrismMac-validation.zip
+          retention-days: 7
