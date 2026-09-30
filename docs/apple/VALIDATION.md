@@ -43,3 +43,13 @@ The first Mac test crashed in Apple's `_AVKit_SwiftUI` bridge on entering playba
 - Duo release-SDK acceptance: currently verified for 27.1 beta TestFlight only.
 
 See [the release checklist](APP-STORE-CHECKLIST.md). Do not describe the app as store-ready or submitted until these gates are completed.
+
+## 2026-09-30 — native TV playback and library foundation
+
+- Replaced tvOS AVFoundation/HLS playback with the official stable VideoLAN TVVLCKit 3.7.3 engine and original Jellyfin media streams, following the desktop client's direct-source strategy. The other Apple targets retain AVFoundation.
+- Server `/Users/{id}/Views` drives separate named sections, and `ParentId` plus collection-specific item types scopes each library exactly as in `desktop/src/jellyfin.ts`. Music albums open their audio tracks.
+- Session tokens now survive app exit/replacement in the device Keychain; passwords are never persisted. Sign-out removes the stored session. A playback failure does not sign out.
+- Full-screen TV video has auto-hiding transport controls with play/pause, ten-second seeking, runtime remaining and return to library. Removed the permanent toolbar and the view-disappearance playback-stop hook.
+- Validation: 12 core tests passed on macOS. Two signed tvOS simulator integration tests passed, including nonzero decoded VLC video frames, pause/restart, and actual Keychain write/read/delete. Physical-device signed build and install succeeded.
+- Physical Apple TV NAS playback, library focus navigation and session restoration after relaunch still require user verification. Launch was blocked by the sleeping TV; installation itself succeeded. Do not treat simulator success as confirmation that the NAS movie is fixed.
+- This remains a native client under development, not full feature parity with Electron PRISM. Playback-history synchronization, downloads, music queues, editing artwork and the full desktop presentation remain release gaps. No App Store submission has been made.

@@ -26,7 +26,7 @@ Refresh the library to shuffle its order, or select PRISM to return to the top. 
 
 Try the bundled offline sample before connecting a server. PRISM is free, with no advertisements or in-app purchases.
 
-Requires your own Jellyfin server and media you have permission to play. Movies and streaming subscriptions are not included. The Apple client directly plays supported formats such as MP4 with H.264/HEVC video and AAC audio. Automatic transcoding, downloads, music-library features and playback-history sync are not included in this release. Your session stays in memory; sign in again after quitting.
+Requires your own Jellyfin server and media you have permission to play. Movies and streaming subscriptions are not included. Apple TV uses VLC for direct playback, with separate server libraries for movies, shows, home videos and music albums. Other Apple targets use AVFoundation-compatible streams. Downloads and playback-history sync are not included. Your revocable session is saved in the device Keychain until sign-out; passwords are never saved.
 
 ## Duo release text — hold until release SDK and device testing pass
 

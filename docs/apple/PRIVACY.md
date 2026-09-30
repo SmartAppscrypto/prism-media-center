@@ -8,7 +8,7 @@ PRISM connects to a media server you choose. It does not provide a hosted movie 
 
 Signing in sends your username and password directly to your server. Subsequent library, detail and playback requests send the session credential and media identifiers to that server. Authentication also identifies the PRISM client and a random session device identifier. The server administrator controls its logs and retention. Use your own server or one whose administrator you trust. Use HTTPS for remote connections.
 
-The app keeps credentials and optional TMDb tokens in memory. It clears them when you sign out or quit; it does not write them to preferences or synchronize them to a PRISM cloud service. Playback uses Apple's media system, which may buffer media temporarily. The bundled sample plays without a network connection.
+The app keeps passwords and optional TMDb tokens in memory only. It saves the server address, username, user identifier and revocable session token in the device Keychain so reconnecting does not require another login. Sign-out removes this saved session; quitting does not. No session is synchronized to a PRISM cloud service. Apple TV playback uses VideoLAN TVVLCKit; other Apple targets use Apple’s media system. Both may buffer media temporarily. The bundled sample plays without a network connection.
 
 ## Optional movie details
 
@@ -16,7 +16,7 @@ If you enter your own TMDb token and request financial details, the app sends th
 
 ## Choices and deletion
 
-Sign out or quit to clear the app's in-memory session. For deletion of server-side accounts, access logs or session credentials, use your server's account settings or contact its administrator. PRISM cannot delete records held by independent server operators or TMDb.
+Sign out to remove the saved Keychain session and clear in-memory credentials. For deletion of server-side accounts, access logs or session credentials, use your server's account settings or contact its administrator. PRISM cannot delete records held by independent server operators or TMDb.
 
 ## Support and changes
 

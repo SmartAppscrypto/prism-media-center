@@ -18,6 +18,7 @@ repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 xcodebuild -version
 command -v xcodegen >/dev/null || { echo 'Install XcodeGen: brew install xcodegen' >&2; exit 1; }
 cd "$repo_root/ios"
+bash scripts/bootstrap-vlc.sh
 xcodegen generate
 # Use a released/RC SDK accepted by Apple; Duo beta builds belong in TestFlight.
 xcodebuild -project Prism.xcodeproj -scheme "$scheme" -configuration Release \

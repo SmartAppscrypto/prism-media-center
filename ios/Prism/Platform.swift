@@ -65,3 +65,36 @@ struct MacVideoPlayer: NSViewRepresentable {
     static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) { view.player = nil }
 }
 #endif
+
+struct PrismPoster: View {
+    let item: Media
+    let model: LibraryModel
+    @State private var imageData: Data?
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Rectangle().fill(LinearGradient(colors: [Color(red: 0.04, green: 0.25, blue: 0.32), .black], startPoint: .topLeading, endPoint: .bottomTrailing))
+            if let imageData {
+                GeometryReader { geometry in
+                Group {
+                #if os(macOS)
+                if let image = NSImage(data: imageData) { Image(nsImage: image).resizable().scaledToFill() }
+                #else
+                if let image = UIImage(data: imageData) { Image(uiImage: image).resizable().scaledToFill() }
+                #endif
+                }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                }
+            }
+            if imageData == nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Image(systemName: "film").font(.largeTitle).foregroundStyle(.cyan)
+                    Text(item.Name).font(.system(.title2, design: .serif)).lineLimit(4)
+                    if let year = item.ProductionYear { Text(String(year)).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                }.padding(20)
+            }
+        }
+        .aspectRatio(item.Type == "MusicAlbum" || item.Type == "Audio" ? 1 : 2 / 3, contentMode: .fit)
+        .clipped().clipShape(RoundedRectangle(cornerRadius: 8))
+        .task(id: item.id) { imageData = await model.artwork(item) }
+        .accessibilityLabel(item.Name)
+    }
+}

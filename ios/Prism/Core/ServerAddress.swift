@@ -24,3 +24,48 @@ enum ServerAddress {
         return value
     }
 }
+
+struct PlaybackResponse: Decodable {
+    struct Source: Decodable {
+        let Id: String
+        let SupportsDirectPlay: Bool?
+        let TranscodingUrl: String?
+    }
+    let MediaSources: [Source]?
+    let PlaySessionId: String?
+    let ErrorCode: String?
+}
+
+enum ApplePlayback {
+    static func body(userID: String, forceTranscode: Bool = false) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "UserId": userID, "StartTimeTicks": 0, "MaxStreamingBitrate": 20_000_000,
+            "EnableDirectPlay": !forceTranscode, "EnableDirectStream": false,
+            "EnableTranscoding": true, "AllowVideoStreamCopy": !forceTranscode,
+            "AllowAudioStreamCopy": !forceTranscode,
+            "DeviceProfile": [
+                "Name": "PRISM Apple", "MaxStreamingBitrate": 20_000_000,
+                "DirectPlayProfiles": [["Container": "mp4,m4v,mov", "Type": "Video", "VideoCodec": "h264,hevc", "AudioCodec": "aac,ac3,eac3,alac"]],
+                "TranscodingProfiles": [["Container": "ts", "Type": "Video", "Protocol": "hls", "VideoCodec": "h264", "AudioCodec": "aac", "Context": "Streaming", "MaxAudioChannels": "2", "MinSegments": 2]],
+                "CodecProfiles": [["Type": "Video", "Codec": "h264", "Conditions": [["Condition": "LessThanEqual", "Property": "VideoBitDepth", "Value": "8", "IsRequired": false]]]],
+                "SubtitleProfiles": [["Format": "srt", "Method": "Encode"], ["Format": "ass", "Method": "Encode"], ["Format": "pgssub", "Method": "Encode"]]
+            ]
+        ])
+    }
+
+    // Never send a session token to a different host returned by a media server.
+    static func streamURL(_ relative: String, server: String, token: String) throws -> URL {
+        let root = try ServerAddress.endpoint(server: server, path: "")
+        let base = root.appendingPathComponent("", isDirectory: true)
+        guard let url = URL(string: relative, relativeTo: base)?.absoluteURL,
+              url.scheme == base.scheme, url.host == base.host, url.port == base.port,
+              url.user == nil, url.password == nil,
+              var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw URLError(.badURL) }
+        var query = parts.queryItems ?? []
+        query.removeAll { $0.name.lowercased() == "api_key" }
+        query.append(URLQueryItem(name: "api_key", value: token))
+        parts.queryItems = query
+        guard let result = parts.url else { throw URLError(.badURL) }
+        return result
+    }
+}

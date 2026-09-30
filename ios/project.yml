@@ -36,6 +36,20 @@ targets:
     type: application
     platform: tvOS
     sources: [Prism]
+    dependencies:
+      - framework: Vendor/TVVLCKit-binary/TVVLCKit.xcframework
+        embed: false
+      - sdk: CoreText.framework
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - sdk: OpenGLES.framework
+      - sdk: VideoToolbox.framework
+      - sdk: CoreMedia.framework
+      - sdk: libc++.tbd
+      - sdk: libxml2.tbd
+      - sdk: libz.tbd
+      - sdk: libbz2.tbd
+      - sdk: libiconv.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: media.prism.tvos
@@ -52,6 +66,18 @@ targets:
         ENABLE_APP_SANDBOX: YES
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: Prism/PrismMac.entitlements
+  PrismTVTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources: [PrismTVTests]
+    dependencies:
+      - target: PrismTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.tvtests
+        INFOPLIST_FILE: ''
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/PrismTV.app/PrismTV
+        BUNDLE_LOADER: $(TEST_HOST)
   PrismCoreTests:
     type: bundle.unit-test
     platform: macOS
@@ -69,6 +95,8 @@ schemes:
     build:
       targets:
         PrismTV: all
+    test:
+      targets: [PrismTVTests]
   PrismMac:
     build:
       targets:

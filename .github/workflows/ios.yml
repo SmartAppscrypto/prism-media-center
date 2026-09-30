@@ -36,6 +36,7 @@ jobs:
       - name: Inspect selected SDK
         run: xcodebuild -version && xcodebuild -showsdks
       - run: brew install xcodegen
+      - run: bash ios/scripts/bootstrap-vlc.sh
       - run: xcodegen generate
         working-directory: ios
       - name: Build Apple client
