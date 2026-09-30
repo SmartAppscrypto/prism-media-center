@@ -44,3 +44,22 @@ struct WindowAccessor: NSViewRepresentable {
     }
 }
 #endif
+
+#if os(macOS)
+import AVKit
+
+struct MacVideoPlayer: NSViewRepresentable {
+    let player: AVPlayer
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = player
+        view.controlsStyle = .floating
+        view.showsFullScreenToggleButton = true
+        return view
+    }
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
+    }
+    static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) { view.player = nil }
+}
+#endif

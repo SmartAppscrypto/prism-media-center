@@ -157,7 +157,7 @@ final class LibraryModel {
             if observer == nil {
                 observer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] time in
                     Task { @MainActor in
-                        guard let self else { return }
+                        guard let self, self.playing != nil else { return }
                         self.seconds = time.seconds.isFinite ? time.seconds : 0
                         let value = self.player.currentItem?.duration.seconds ?? 0
                         self.duration = value.isFinite ? value : 0
@@ -274,8 +274,12 @@ struct PrismRoot: View {
                     #endif
                 } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.accessibilityLabel("Toggle full screen")
             }.padding(8).buttonStyle(.bordered)
+            #if os(macOS)
+            MacVideoPlayer(player: model.player)
+            #else
             VideoPlayer(player: model.player)
-            if model.duration > 0 { Text("\(Int(max(0, model.duration - model.seconds) / 60)) min remaining").font(.caption).monospacedDigit().padding(5) }
+            #endif
+            if model.duration > 0 { Text("\(PlaybackTime.remaining(duration: model.duration, elapsed: model.seconds)) remaining").font(.caption).monospacedDigit().padding(5) }
         }.background(.black)
     }
     var browser: some View {

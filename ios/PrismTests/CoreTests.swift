@@ -1,6 +1,12 @@
 import XCTest
 
 final class CoreTests: XCTestCase {
+    func testRuntimeCounter() {
+        XCTAssertEqual(PlaybackTime.remaining(duration: 30, elapsed: 4.2), "0:26")
+        XCTAssertEqual(PlaybackTime.remaining(duration: 7200, elapsed: 1), "1:59:59")
+        XCTAssertEqual(PlaybackTime.remaining(duration: 10, elapsed: 11), "0:00")
+        XCTAssertEqual(PlaybackTime.remaining(duration: .infinity, elapsed: 0), "--:--")
+    }
     func testHorizontalDivisionSurvivesFullScreen() {
         let fold = CGRect(x: 0, y: 390, width: 800, height: 20)
         for mode in DisplayMode.allCases {
