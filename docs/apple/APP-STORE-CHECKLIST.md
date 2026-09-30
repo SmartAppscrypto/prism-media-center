@@ -59,6 +59,6 @@ Select the processed build for each platform, attach screenshots and review info
 
 ## Evidence and remaining work
 
-The GitHub Apple validation workflow builds the platform targets and runs core layout/address tests. See the associated PR for the exact run and fixes. Signing, App Store validation, TestFlight installation, full physical-device QA, final screenshots, final privacy responses and review-server setup remain required before release.
+The GitHub Apple validation workflow builds the platform targets and runs core layout/address/time tests. See [native validation evidence](VALIDATION.md) for exact runs, the reproduced Mac crash and its fix, and the local smoke test. Signing, App Store validation, TestFlight installation, full physical-device QA, final screenshots, final privacy responses and review-server setup remain required before release.
 
 Sources: [Apple enrollment](https://developer.apple.com/programs/enroll/), [App submission](https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-app), [iPhone Duo preparation](https://developer.apple.com/iphone-duo/), [Privacy management](https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy).
