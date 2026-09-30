@@ -192,6 +192,7 @@ final class LibraryModel {
             do {
                 #if os(tvOS)
                 let url: URL
+                var streamDescription = ""
                 if isDemo {
                     guard let sample = Bundle.main.url(forResource: "PrismSample", withExtension: "mp4") else { throw URLError(.fileDoesNotExist) }
                     url = sample
@@ -201,10 +202,11 @@ final class LibraryModel {
                     // Same direct-source strategy as desktop/src/jellyfin.ts + libVLC.
                     let info: PlaybackResponse = try await request("Items/\(try ServerAddress.id(item.id))/PlaybackInfo", query: [.init(name: "UserId", value: userID)])
                     guard let source = info.MediaSources?.first else { throw PlaybackFailure(message: "No media source is available for this title.") }
+                    streamDescription = source.videoDescription
                     url = try endpoint("Videos/\(try ServerAddress.id(item.id))/stream", query: [.init(name: "static", value: "true"), .init(name: "MediaSourceId", value: source.Id), .init(name: "api_key", value: token)])
                 }
                 guard !Task.isCancelled, revision == playbackRevision else { return }
-                try tvPlayback.open(url)
+                try tvPlayback.open(url, expectsVideo: item.Type != "Audio", streamDescription: streamDescription)
                 preparingPlayback = false
                 #else
                 let url = try await playbackURL(item, forceTranscode: false)
@@ -398,10 +400,6 @@ struct PrismRoot: View {
         #endif
         #if os(tvOS)
         .ignoresSafeArea(.all, edges: model.playing == nil ? [] : .all)
-        .onPlayPauseCommand {
-            guard model.playing != nil else { return }
-            model.tvPlayback.toggle()
-        }
         .onExitCommand {
             if model.playing != nil { model.stop() }
             returnToTop()
@@ -458,6 +456,9 @@ struct PrismRoot: View {
         #endif
     }
     var browser: some View {
+        #if os(tvOS)
+        TVLibrary(model: model)
+        #else
         VStack(spacing: 8) {
             HStack {
                 Button("P R I S M") { returnToTop() }.font(.system(.headline, design: .monospaced)).focused($libraryTopFocused).accessibilityLabel("Return to top of library")
@@ -497,6 +498,7 @@ struct PrismRoot: View {
                 }
             } else { details }
         }.padding(.top, 8).background(.background)
+        #endif
     }
     var posterWidth: CGFloat {
         #if os(tvOS)

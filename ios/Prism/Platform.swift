@@ -87,7 +87,11 @@ struct PrismPoster: View {
             if imageData == nil {
                 VStack(alignment: .leading, spacing: 10) {
                     Image(systemName: "film").font(.largeTitle).foregroundStyle(.cyan)
+                    #if os(tvOS)
+                    Text(item.Name).font(.system(size: 32, design: .serif)).lineLimit(4).minimumScaleFactor(0.7)
+                    #else
                     Text(item.Name).font(.system(.title2, design: .serif)).lineLimit(4)
+                    #endif
                     if let year = item.ProductionYear { Text(String(year)).font(.caption.monospaced()).foregroundStyle(.secondary) }
                 }.padding(20)
             }

@@ -79,6 +79,16 @@ targets:
         INFOPLIST_FILE: ''
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/PrismTV.app/PrismTV
         BUNDLE_LOADER: $(TEST_HOST)
+  PrismTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources: [PrismTVUITests]
+    dependencies:
+      - target: PrismTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: media.prism.tvuitests
+        INFOPLIST_FILE: ''
   PrismCoreTests:
     type: bundle.unit-test
     platform: macOS
@@ -97,7 +107,7 @@ schemes:
       targets:
         PrismTV: all
     test:
-      targets: [PrismTVTests]
+      targets: [PrismTVTests, PrismTVUITests]
   PrismMac:
     build:
       targets:

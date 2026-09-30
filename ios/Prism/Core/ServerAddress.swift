@@ -30,6 +30,19 @@ struct PlaybackResponse: Decodable {
         let Id: String
         let SupportsDirectPlay: Bool?
         let TranscodingUrl: String?
+        let MediaStreams: [Stream]?
+        struct Stream: Decodable {
+            let `Type`: String?
+            let Codec: String?
+            let Profile: String?
+            let Width: Int?
+            let Height: Int?
+            let BitDepth: Int?
+        }
+        var videoDescription: String {
+            guard let video = MediaStreams?.first(where: { $0.Type == "Video" }) else { return "Video format unavailable" }
+            return [video.Codec, video.Profile, video.Width.flatMap { w in video.Height.map { "\(w)×\($0)" } }, video.BitDepth.map { "\($0)-bit" }].compactMap { $0 }.joined(separator: " · ")
+        }
     }
     let MediaSources: [Source]?
     let PlaySessionId: String?
