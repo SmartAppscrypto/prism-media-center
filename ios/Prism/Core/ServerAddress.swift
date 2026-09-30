@@ -29,6 +29,7 @@ struct PlaybackResponse: Decodable {
     struct Source: Decodable {
         let Id: String
         let SupportsDirectPlay: Bool?
+        let SupportsTranscoding: Bool?
         let TranscodingUrl: String?
         let MediaStreams: [Stream]?
         struct Stream: Decodable {
@@ -38,6 +39,10 @@ struct PlaybackResponse: Decodable {
             let Width: Int?
             let Height: Int?
             let BitDepth: Int?
+        }
+        var exceedsTVVideoDimensions: Bool {
+            guard let video = MediaStreams?.first(where: { $0.Type == "Video" }) else { return false }
+            return (video.Width ?? 0) > 3840 || (video.Height ?? 0) > 2160
         }
         var videoDescription: String {
             guard let video = MediaStreams?.first(where: { $0.Type == "Video" }) else { return "Video format unavailable" }
@@ -64,6 +69,38 @@ enum ApplePlayback {
                 "SubtitleProfiles": [["Format": "srt", "Method": "Encode"], ["Format": "ass", "Method": "Encode"], ["Format": "pgssub", "Method": "Encode"]]
             ]
         ])
+    }
+
+    // Bound the TV fallback's decoding/memory cost; conversion happens on the server.
+    static func tvCompatibilityBody(userID: String) throws -> Data {
+        var request = try JSONSerialization.jsonObject(with: body(userID: userID, forceTranscode: true)) as! [String: Any]
+        request["MaxStreamingBitrate"] = 8_000_000
+        var profile = request["DeviceProfile"] as! [String: Any]
+        profile["Name"] = "PRISM TV compatibility"
+        profile["MaxStreamingBitrate"] = 8_000_000
+        profile["DirectPlayProfiles"] = [] as [[String: Any]]
+        profile["CodecProfiles"] = [["Type": "Video", "Codec": "h264", "Conditions": [
+            ["Condition": "LessThanEqual", "Property": "Width", "Value": "1920", "IsRequired": true],
+            ["Condition": "LessThanEqual", "Property": "Height", "Value": "1080", "IsRequired": true],
+            ["Condition": "LessThanEqual", "Property": "VideoBitDepth", "Value": "8", "IsRequired": true]
+        ]]]
+        request["DeviceProfile"] = profile
+        return try JSONSerialization.data(withJSONObject: request)
+    }
+
+    static func tvHLSURL(server: String, itemID: String, sourceID: String, deviceID: String, sessionID: String?, token: String) throws -> URL {
+        var query: [URLQueryItem] = [
+            .init(name: "MediaSourceId", value: sourceID), .init(name: "DeviceId", value: deviceID),
+            .init(name: "VideoCodec", value: "h264"), .init(name: "AudioCodec", value: "aac"),
+            .init(name: "MaxWidth", value: "1920"), .init(name: "MaxHeight", value: "1080"),
+            .init(name: "VideoBitRate", value: "7808000"), .init(name: "AudioBitRate", value: "192000"),
+            .init(name: "MaxAudioChannels", value: "2"), .init(name: "TranscodingMaxAudioChannels", value: "2"),
+            .init(name: "SegmentContainer", value: "ts"), .init(name: "MinSegments", value: "2"),
+            .init(name: "allowVideoStreamCopy", value: "false"), .init(name: "allowAudioStreamCopy", value: "false"),
+            .init(name: "api_key", value: token)
+        ]
+        if let sessionID { query.append(.init(name: "PlaySessionId", value: sessionID)) }
+        return try ServerAddress.endpoint(server: server, path: "Videos/\(try ServerAddress.id(itemID))/master.m3u8", query: query)
     }
 
     // Never send a session token to a different host returned by a media server.

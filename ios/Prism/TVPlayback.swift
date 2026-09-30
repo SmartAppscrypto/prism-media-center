@@ -11,7 +11,7 @@ final class TVPlayback {
     var isPlaying = false
     var loading = true
     var seekable = false
-    var compatibilityMode = false
+    var serverConverted = false
     var status: String?
     var failure: String?
     var diagnostics = ""
@@ -20,12 +20,12 @@ final class TVPlayback {
     private var expectsVideo = true
     private var streamDescription = ""
 
-    func open(_ url: URL, expectsVideo: Bool = true, streamDescription: String = "") throws {
+    func open(_ url: URL, expectsVideo: Bool = true, streamDescription: String = "", serverConverted: Bool = false) throws {
         stop()
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try AVAudioSession.sharedInstance().setActive(true)
         source = url; self.expectsVideo = expectsVideo; self.streamDescription = streamDescription
-        compatibilityMode = false
+        self.serverConverted = serverConverted
         start(at: 0)
     }
 
@@ -35,8 +35,8 @@ final class TVPlayback {
         failure = nil; loading = true; elapsed = seconds; seekable = false
         let media = VLCMedia(url: source)
         media.addOption(":network-caching=1500")
-        // VLC's native VideoToolbox module is separate from avcodec's hardware backend.
-        if compatibilityMode { media.addOption(":no-videotoolbox"); media.addOption(":avcodec-hw=none") }
+        // Keep hardware decoding enabled. Forcing software decoding of camera exports
+        // exceeded the physical Apple TV's per-process memory limit.
         if seconds > 0 { media.addOption(":start-time=\(seconds)") }
         player.media = media
         player.play()
@@ -50,19 +50,19 @@ final class TVPlayback {
                 duration = Double(player.media?.length.intValue ?? 0) / 1000
                 isPlaying = player.isPlaying; seekable = player.isSeekable
                 let stats = player.media?.statistics
-                diagnostics = "\(streamDescription)\n\(compatibilityMode ? "Software" : "Automatic") decoder · decoded \(stats?.decodedVideo ?? 0) · displayed \(stats?.displayedPictures ?? 0) · lost \(stats?.lostPictures ?? 0)"
+                diagnostics = "\(streamDescription)\n\(serverConverted ? "Server-converted" : "Original") decoder · decoded \(stats?.decodedVideo ?? 0) · displayed \(stats?.displayedPictures ?? 0) · lost \(stats?.lostPictures ?? 0)"
                 if player.state == .playing || elapsed > 0 { loading = false }
-                if compatibilityMode && (stats?.displayedPictures ?? 0) > 0 { status = "Playing with the software decoder" }
                 if loading { startup += 1 }
                 // Detect missing output, not black scene content. Never retry music or a paused player.
                 if expectsVideo && isPlaying && elapsed > 1 && (stats?.displayedPictures ?? 0) == 0 {
                     missingPicture += 1
                 } else { missingPicture = 0 }
-                if missingPicture >= 20 && !compatibilityMode {
-                    retryWithSoftwareDecoder(); return
-                }
-                if missingPicture >= 30 && compatibilityMode {
-                    status = "No video frames are reaching the display. Open Playback info to check the format."
+                if missingPicture >= 20 {
+                    player.pause(); isPlaying = false
+                    status = serverConverted
+                        ? "The converted stream has no picture. Check Jellyfin's transcoding log for this title."
+                        : "No picture is reaching the display. Try Server-converted playback in the controls."
+                    missingPicture = 0
                 }
                 if player.state == .error || startup >= 120 {
                     failure = "VLC could not open this file. Check that the media is available on your server, then retry. Your sign-in has been kept."
@@ -71,12 +71,6 @@ final class TVPlayback {
                 if player.state == .ended { isPlaying = false; return }
             }
         }
-    }
-    func retryWithSoftwareDecoder() {
-        guard source != nil, expectsVideo, !compatibilityMode else { return }
-        let position = max(0, elapsed - 2)
-        compatibilityMode = true; status = "Retrying video with the software decoder…"
-        start(at: position)
     }
     func toggle() { if player.isPlaying { player.pause() } else { player.play() }; isPlaying = player.isPlaying }
     func seek(_ delta: Int32) {
@@ -101,6 +95,12 @@ struct TVVideoSurface: UIViewRepresentable {
     }
 }
 
+// PlainButtonStyle still supplies a highlight on tvOS. This focus target must
+// never draw a background, tint, scale effect, or system hover overlay.
+private struct InvisibleTransportStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
+}
+
 struct TVPlaybackScreen: View {
     let model: LibraryModel
     private enum Control: Hashable { case surface, back, rewind, play, forward, retry, info }
@@ -121,7 +121,8 @@ struct TVPlaybackScreen: View {
             if !controls {
                 // A real focus target remains available when the transport is hidden.
                 Button(action: reveal) { Color.clear.contentShape(Rectangle()) }
-                    .buttonStyle(.plain).focused($focused, equals: .surface)
+                    .buttonStyle(InvisibleTransportStyle()).focusEffectDisabled().hoverEffectDisabled()
+                    .focused($focused, equals: .surface)
                     .accessibilityLabel("Show playback controls")
                     .onMoveCommand { _ in reveal() }
             }
@@ -144,8 +145,9 @@ struct TVPlaybackScreen: View {
                             Button { model.tvPlayback.seek(10); touch() } label: { Image(systemName: "goforward.10") }
                                 .accessibilityLabel("Forward 10 seconds").focused($focused, equals: .forward).disabled(!model.tvPlayback.seekable)
                             if model.playing?.Type != "Audio" {
-                                Button("Retry picture") { model.tvPlayback.retryWithSoftwareDecoder(); touch() }
-                                    .focused($focused, equals: .retry).disabled(model.tvPlayback.compatibilityMode)
+                                Button("Server-converted playback") { model.retryTVWithServerConversion(); touch() }
+                                    .focused($focused, equals: .retry)
+                                    .disabled(model.preparingPlayback || model.tvPlayback.serverConverted || model.isDemo)
                             }
                             Button("Playback info") { showInfo.toggle(); touch() }.focused($focused, equals: .info)
                         }
@@ -164,6 +166,7 @@ struct TVPlaybackScreen: View {
             try? await Task.sleep(for: .seconds(7))
             if !Task.isCancelled, model.tvPlayback.isPlaying, !showInfo { hide() }
         }
+        .onChange(of: model.tvPlayback.status) { _, status in if status != nil { reveal() } }
         .onChange(of: model.tvPlayback.failure) { _, failure in
             if let failure { model.stop(); model.error = failure }
         }

@@ -79,7 +79,10 @@ final class LibraryModel {
     var preparingPlayback = false
     private var playbackRevision = 0
     private var deviceID = UUID().uuidString
-    private let network = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+    private let network: URLSession
+    init(network: URLSession? = nil) {
+        self.network = network ?? URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+    }
     private var selectionTask: Task<Void, Never>?
     private var sessionRevision = 0
     private var reloadRevision = 0
@@ -117,9 +120,20 @@ final class LibraryModel {
         request.setValue("MediaBrowser Client=\"PRISM\", Device=\"Apple\", DeviceId=\"\(deviceID)\", Version=\"1.0.0\"", forHTTPHeaderField: "Authorization")
         if !token.isEmpty { request.setValue(token, forHTTPHeaderField: "X-Emby-Token") }
         if let body { request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        let (data, response) = try await network.data(for: request)
+        let (bytes, response) = try await network.bytes(for: request)
+        defer { bytes.task.cancel() }
         guard let response = response as? HTTPURLResponse else { throw PlaybackFailure(message: "Server returned no HTTP response.") }
         guard (200..<300).contains(response.statusCode) else { throw PlaybackFailure(message: "Server request failed (HTTP \(response.statusCode)).") }
+        guard response.expectedContentLength <= 16 * 1024 * 1024 else { throw PlaybackFailure(message: "Server JSON response is too large.") }
+        var data = Data()
+        for try await byte in bytes {
+            guard data.count < 16 * 1024 * 1024 else { throw PlaybackFailure(message: "Server JSON response is too large.") }
+            data.append(byte)
+            if data.count == 64 {
+                let prefix = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard prefix.hasPrefix("{") || prefix.hasPrefix("[") else { throw PlaybackFailure(message: "Server returned non-JSON data for a metadata request.") }
+            }
+        }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .custom { keys in
             let key = keys.last!.stringValue
@@ -193,6 +207,7 @@ final class LibraryModel {
                 #if os(tvOS)
                 let url: URL
                 var streamDescription = ""
+                var converted = false
                 if isDemo {
                     guard let sample = Bundle.main.url(forResource: "PrismSample", withExtension: "mp4") else { throw URLError(.fileDoesNotExist) }
                     url = sample
@@ -203,10 +218,16 @@ final class LibraryModel {
                     let info: PlaybackResponse = try await request("Items/\(try ServerAddress.id(item.id))/PlaybackInfo", query: [.init(name: "UserId", value: userID)])
                     guard let source = info.MediaSources?.first else { throw PlaybackFailure(message: "No media source is available for this title.") }
                     streamDescription = source.videoDescription
-                    url = try endpoint("Videos/\(try ServerAddress.id(item.id))/stream", query: [.init(name: "static", value: "true"), .init(name: "MediaSourceId", value: source.Id), .init(name: "api_key", value: token)])
+                    if source.exceedsTVVideoDimensions {
+                        converted = true
+                        url = try await convertedTVURL(item)
+                        streamDescription += " → H.264 / AAC up to 1080p"
+                    } else {
+                        url = try endpoint("Videos/\(try ServerAddress.id(item.id))/stream", query: [.init(name: "static", value: "true"), .init(name: "MediaSourceId", value: source.Id), .init(name: "api_key", value: token)])
+                    }
                 }
                 guard !Task.isCancelled, revision == playbackRevision else { return }
-                try tvPlayback.open(url, expectsVideo: item.Type != "Audio", streamDescription: streamDescription)
+                try tvPlayback.open(url, expectsVideo: item.Type != "Audio", streamDescription: streamDescription, serverConverted: converted)
                 preparingPlayback = false
                 #else
                 let url = try await playbackURL(item, forceTranscode: false)
@@ -219,6 +240,83 @@ final class LibraryModel {
             }
         }
     }
+    #if os(tvOS)
+    #if DEBUG
+    // Opt-in local troubleshooting for developer-installed builds. Export only
+    // format descriptions, never authentication, server URLs, or source paths.
+    func diagnoseMediaIfRequested() async {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--prism-diagnose-media"),
+              arguments.indices.contains(index + 1), !token.isEmpty else { return }
+        var lines: [String] = []
+        do {
+            let matches: Items = try await request("Users/\(try ServerAddress.id(userID))/Items", query: [
+                .init(name: "SearchTerm", value: arguments[index + 1]), .init(name: "Recursive", value: "true"),
+                .init(name: "IncludeItemTypes", value: "Movie,Video,Episode"), .init(name: "Limit", value: "5")])
+            for item in matches.Items {
+                let info: PlaybackResponse = try await request("Items/\(try ServerAddress.id(item.id))/PlaybackInfo",
+                    query: [.init(name: "UserId", value: userID)])
+                lines.append(item.Name + ": " + (info.MediaSources ?? []).map(\.videoDescription).joined(separator: " | "))
+            }
+            if lines.isEmpty { lines = ["No matching video found."] }
+            if arguments.contains("--prism-probe-playback"),
+               let item = matches.Items.first(where: { $0.Name.caseInsensitiveCompare(arguments[index + 1]) == .orderedSame }) {
+                play(item)
+                for _ in 0..<90 {
+                    try await Task.sleep(for: .seconds(1))
+                    if !error.isEmpty { lines.append(error); break }
+                    if !preparingPlayback && tvPlayback.elapsed > 5 {
+                        lines.append(tvPlayback.diagnostics); break
+                    }
+                }
+                if preparingPlayback { lines.append("Stream preparation did not complete within 90 seconds.") }
+                else if error.isEmpty { lines.append("Clock: \(tvPlayback.elapsed), playing: \(tvPlayback.isPlaying)") }
+                stop()
+            }
+        } catch { lines = ["Unable to load media format diagnostics."] }
+        if let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            try? lines.joined(separator: "\n").write(to: folder.appendingPathComponent("prism-media-diagnostic.txt"), atomically: true, encoding: .utf8)
+        }
+    }
+    #endif
+    private func convertedTVURL(_ item: Media) async throws -> URL {
+        let response: PlaybackResponse = try await request("Items/\(try ServerAddress.id(item.id))/PlaybackInfo",
+            query: [.init(name: "UserId", value: userID), .init(name: "DeviceId", value: deviceID)],
+            body: ApplePlayback.tvCompatibilityBody(userID: userID))
+        guard let source = response.MediaSources?.first, source.SupportsTranscoding != false,
+              source.TranscodingUrl != nil else {
+            throw PlaybackFailure(message: "Jellyfin did not offer a converted stream. Check this user's video/audio transcoding permissions.")
+        }
+        // Some servers return an extensionless original-file URL as TranscodingUrl.
+        // Request Jellyfin's documented HLS endpoint explicitly, with actual codec,
+        // size and stream-copy constraints; never download that original as a playlist.
+        let url = try ApplePlayback.tvHLSURL(server: server, itemID: item.id, sourceID: source.Id,
+                                            deviceID: deviceID, sessionID: response.PlaySessionId, token: token)
+        try await checkPlaylist(url)
+        return url
+    }
+    func retryTVWithServerConversion() {
+        guard let item = playing, !isDemo, !preparingPlayback, !tvPlayback.serverConverted else { return }
+        // Release the original decoder before asking the NAS for a bounded H.264 stream.
+        // Do not keep a high-resolution software decoder alive beside the replacement.
+        playbackRevision += 1
+        let revision = playbackRevision
+        playbackTask?.cancel()
+        tvPlayback.stop()
+        preparingPlayback = true
+        playbackTask = Task {
+            do {
+                let url = try await convertedTVURL(item)
+                guard !Task.isCancelled, revision == playbackRevision else { return }
+                try tvPlayback.open(url, streamDescription: "H.264 / AAC · up to 1080p", serverConverted: true)
+                preparingPlayback = false
+            } catch {
+                guard !Task.isCancelled, revision == playbackRevision else { return }
+                playbackFailed("Server conversion: " + diagnostic(error))
+            }
+        }
+    }
+    #endif
     private func playbackURL(_ item: Media, forceTranscode: Bool) async throws -> URL {
         if isDemo {
             guard let sample = Bundle.main.url(forResource: "PrismSample", withExtension: "mp4") else { throw URLError(.fileDoesNotExist) }
@@ -247,10 +345,23 @@ final class LibraryModel {
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         request.setValue(token, forHTTPHeaderField: "X-Emby-Token")
-        let (data, response) = try await network.data(for: request)
+        let (bytes, response) = try await network.bytes(for: request)
+        defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw PlaybackFailure(message: "HLS playlist returned no HTTP response.") }
-        print("PRISM playback: HLS playlist level=\(depth), HTTP=\(http.statusCode), bytes=\(data.count)")
+        print("PRISM playback: HLS headers level=\(depth), HTTP=\(http.statusCode), length=\(http.expectedContentLength), type=\(http.mimeType ?? "unknown")")
         guard http.statusCode == 200 else { throw PlaybackFailure(message: "Jellyfin HLS playlist returned HTTP \(http.statusCode). Check the server's FFmpeg log for this playback attempt.") }
+        guard http.expectedContentLength <= 512 * 1024 else { throw PlaybackFailure(message: "Jellyfin returned an oversized HLS playlist response.") }
+        var data = Data()
+        for try await byte in bytes {
+            guard data.count < 512 * 1024 else { throw PlaybackFailure(message: "Jellyfin returned an oversized HLS playlist response.") }
+            data.append(byte)
+            if data.count == 64 {
+                guard String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#EXTM3U") else {
+                    throw PlaybackFailure(message: "Jellyfin returned media data instead of an HLS playlist.")
+                }
+            }
+        }
+        print("PRISM playback: HLS playlist level=\(depth), bytes=\(data.count)")
         guard let text = String(data: data, encoding: .utf8), text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#EXTM3U") else { throw PlaybackFailure(message: "Jellyfin returned an invalid HLS playlist.") }
         let lines = text.components(separatedBy: .newlines)
         if depth == 0, lines.contains(where: { $0.hasPrefix("#EXT-X-STREAM-INF:") }),
@@ -356,7 +467,14 @@ final class LibraryModel {
 
 struct PrismWindow: View {
     @State private var model = LibraryModel()
-    var body: some View { PrismRoot(model: model).task { await model.restoreSession() } }
+    var body: some View {
+        PrismRoot(model: model).task {
+            await model.restoreSession()
+            #if os(tvOS) && DEBUG
+            await model.diagnoseMediaIfRequested()
+            #endif
+        }
+    }
 }
 
 // Keep the AVPlayer in the model, never in a posture-specific view.

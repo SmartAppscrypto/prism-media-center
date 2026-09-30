@@ -54,6 +54,46 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(transcode["VideoCodec"] as? String, "h264")
         XCTAssertEqual(transcode["AudioCodec"] as? String, "aac")
     }
+    func testOversizedCameraVideoIsConvertedBeforeOpening() throws {
+        func source(width: Int, height: Int) throws -> PlaybackResponse.Source {
+            try JSONDecoder().decode(PlaybackResponse.Source.self, from: Data("{\"Id\":\"fixture\",\"MediaStreams\":[{\"Type\":\"Video\",\"Codec\":\"hevc\",\"Width\":\(width),\"Height\":\(height)}]}".utf8))
+        }
+        XCTAssertTrue(try source(width: 5952, height: 3968).exceedsTVVideoDimensions)
+        XCTAssertTrue(try source(width: 2160, height: 3840).exceedsTVVideoDimensions)
+        XCTAssertFalse(try source(width: 3840, height: 2160).exceedsTVVideoDimensions)
+        XCTAssertFalse(try source(width: 1920, height: 1080).exceedsTVVideoDimensions)
+    }
+
+    func testTVHLSRequestsRealConversionInsteadOfOriginalDownload() throws {
+        let url = try ApplePlayback.tvHLSURL(server: "https://example.invalid/jellyfin", itemID: "movie", sourceID: "source", deviceID: "device", sessionID: "session", token: "a&b")
+        XCTAssertEqual(url.path, "/jellyfin/Videos/movie/master.m3u8")
+        let query = Dictionary(uniqueKeysWithValues: URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!.map { ($0.name, $0.value!) })
+        XCTAssertEqual(query["VideoCodec"], "h264")
+        XCTAssertEqual(query["MaxWidth"], "1920")
+        XCTAssertEqual(query["MaxHeight"], "1080")
+        XCTAssertEqual(query["allowVideoStreamCopy"], "false")
+        XCTAssertEqual(query["allowAudioStreamCopy"], "false")
+        XCTAssertEqual(query["api_key"], "a&b")
+        XCTAssertEqual(query["PlaySessionId"], "session")
+    }
+
+    func testTVConversionRequiresBoundedServerTranscoding() throws {
+        let data = try ApplePlayback.tvCompatibilityBody(userID: "fixture")
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(request["EnableDirectPlay"] as? Bool, false)
+        XCTAssertEqual(request["AllowVideoStreamCopy"] as? Bool, false)
+        XCTAssertEqual(request["AllowAudioStreamCopy"] as? Bool, false)
+        XCTAssertEqual(request["MaxStreamingBitrate"] as? Int, 8_000_000)
+        let profile = try XCTUnwrap(request["DeviceProfile"] as? [String: Any])
+        let codecs = try XCTUnwrap(profile["CodecProfiles"] as? [[String: Any]])
+        let conditions = try XCTUnwrap(codecs.first?["Conditions"] as? [[String: Any]])
+        for (property, limit) in [("Width", "1920"), ("Height", "1080"), ("VideoBitDepth", "8")] {
+            let condition = try XCTUnwrap(conditions.first { $0["Property"] as? String == property })
+            XCTAssertEqual(condition["Value"] as? String, limit)
+            XCTAssertEqual(condition["IsRequired"] as? Bool, true)
+        }
+    }
+
     func testPlaybackURLKeepsServerSubpathAndReplacesToken() throws {
         let url = try ApplePlayback.streamURL("Videos/abc/master.m3u8?api_key=old&MediaSourceId=xyz", server: "https://example.com/jellyfin", token: "a&b")
         XCTAssertEqual(url.path, "/jellyfin/Videos/abc/master.m3u8")

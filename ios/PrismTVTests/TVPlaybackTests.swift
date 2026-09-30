@@ -9,19 +9,11 @@ final class TVPlaybackTests: XCTestCase {
         let surface = UIView(frame: CGRect(x: 0, y: 0, width: 1920, height: 1080))
         engine.player.drawable = surface
         defer { engine.stop() }
-        for attempt in 0..<2 {
+        for _ in 0..<2 {
             try engine.open(url)
             for _ in 0..<20 {
                 if engine.elapsed > 0.5 { break }
                 try await Task.sleep(for: .milliseconds(500))
-            }
-            if attempt == 1 {
-                engine.retryWithSoftwareDecoder()
-                for _ in 0..<20 {
-                    if (engine.player.media?.statistics.decodedVideo ?? 0) > 0 && engine.elapsed > 0.5 { break }
-                    try await Task.sleep(for: .milliseconds(500))
-                }
-                XCTAssertTrue(engine.compatibilityMode)
             }
             XCTAssertNil(engine.failure)
             XCTAssertGreaterThan(engine.player.media?.statistics.decodedVideo ?? 0, 0, "VLC must decode video frames, not merely advance its clock")
